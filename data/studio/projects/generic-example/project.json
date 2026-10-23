@@ -1,0 +1,95 @@
+{
+  "id": "generic-example",
+  "name": "通用網站範例",
+  "description": "示範開啟網站、文字驗證與截圖；可複製後改成自己的流程。",
+  "releaseNotes": "示範開啟網站、文字驗證與截圖；可複製後改成自己的流程。",
+  "version": "1.0.0",
+  "status": "ready",
+  "targetUrl": "https://example.com",
+  "allowedDomains": [
+    "example.com"
+  ],
+  "adapter": "generic",
+  "browser": {
+    "connectionMode": "managed",
+    "channel": "bundled",
+    "headless": false,
+    "slowMoMs": 100,
+    "defaultTimeoutMs": 30000,
+    "downloadTimeoutMs": 60000,
+    "viewportWidth": 1440,
+    "viewportHeight": 900,
+    "stealth": false,
+    "reuseProfile": true,
+    "downloadPdfInsteadOfPreview": false,
+    "cdpEndpoint": "http://127.0.0.1:9222",
+    "cdpAutoLaunch": true,
+    "cdpInitialPageMode": "first",
+    "cdpInitialPageTarget": "",
+    "cdpInitialPageIndex": 1
+  },
+  "settings": {
+    "maxRetries": 1,
+    "safePlayback": true,
+    "humanizedPlayback": false,
+    "minStepDelayMs": 2000,
+    "screenshotMode": "failure",
+    "saveHtmlOnFailure": true,
+    "captureConsole": true,
+    "captureNetwork": true,
+    "defaultConcurrency": 1
+  },
+  "parameters": [
+    {
+      "id": "p-title",
+      "name": "expectedTitle",
+      "label": "預期標題",
+      "type": "text",
+      "required": true,
+      "defaultValue": "Example Domain",
+      "description": "用來驗證頁面內容。",
+      "sensitive": false,
+      "options": []
+    }
+  ],
+  "steps": [
+    {
+      "id": "step-open",
+      "name": "開啟目標網站",
+      "kind": "navigate",
+      "enabled": true,
+      "url": "https://example.com",
+      "timeoutMs": 30000,
+      "retryCount": 1
+    },
+    {
+      "id": "step-check",
+      "name": "確認頁面標題",
+      "kind": "assert",
+      "enabled": true,
+      "selectors": [
+        {
+          "strategy": "text",
+          "value": "{{expectedTitle}}",
+          "exact": true
+        }
+      ],
+      "verification": {
+        "kind": "visible"
+      }
+    },
+    {
+      "id": "step-shot",
+      "name": "保存完成畫面",
+      "kind": "screenshot",
+      "enabled": true,
+      "value": "completed.png"
+    }
+  ],
+  "tags": [
+    "範例",
+    "通用"
+  ],
+  "createdAt": "2026-10-20T07:45:23.921Z",
+  "updatedAt": "2026-10-20T07:45:23.923Z"
+}

@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Playwright MCP Report Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">M</div>
+          <div>
+            <h1>MCP Report Console</h1>
+            <p>Playwright automation workspace</p>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="MCP tools">
+          <button class="nav-item active" data-view="download">下載任務</button>
+          <button class="nav-item" data-view="presets">批次範本</button>
+          <button class="nav-item" data-view="definitions">報表定義</button>
+        </nav>
+
+        <details class="developer-nav">
+          <summary>開發者功能</summary>
+          <div class="developer-nav-body">
+            <button class="nav-item developer-nav-item" data-view="tools">MCP 工具</button>
+            <button class="nav-item developer-nav-item" data-view="raw">手動呼叫</button>
+            <button class="ghost-button compact-button" id="themeToggleButton" type="button" style="width: 100%; margin-top: 8px; justify-content: center;">切換深淺模式</button>
+          </div>
+        </details>
+
+        <div class="status-block">
+          <span class="status-dot" id="serverDot"></span>
+          <span id="serverStatus">檢查中</span>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <section class="topbar">
+          <div>
+            <p class="eyebrow">Local MCP UI</p>
+            <h2 id="viewTitle">下載任務</h2>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="ghost-button" id="manageAuthButton" type="button" style="display: flex; align-items: center; gap: 6px;">
+              <span class="status-dot" id="topbarAuthDot" style="background: var(--muted);"></span>
+              EBAS 登入管理
+            </button>
+            <button class="ghost-button" id="refreshButton" type="button">重新整理</button>
+          </div>
+        </section>
+
+        <section class="view-panel active" id="downloadView">
+          <div class="split-layout">
+            <section class="panel task-config-panel">
+              <details class="collapsible-section" open>
+                <summary>
+                  <span>
+                    <strong>報表與參數</strong>
+                    <small>選擇報表、填入參數，建立單筆下載或加入批次。</small>
+                  </span>
+                </summary>
+
+                <label class="field">
+                  <span>報表</span>
+                  <select id="reportSelect"></select>
+                </label>
+
+                <div class="parameter-grid" id="parameterFields"></div>
+
+
+                <div class="task-actions">
+                  <button class="primary-button" id="createTaskButton" type="button">建立下載任務</button>
+                  <button class="ghost-button" id="addBatchItemButton" type="button">加入批次</button>
+                </div>
+              </details>
+
+
+              <details class="advanced-settings">
+                <summary>
+                  <span>
+                    <strong>進階設定</strong>
+                    <small>執行控制、錯誤處理與除錯記錄；一般情況可維持預設值。</small>
+                  </span>
+                </summary>
+
+                <div class="advanced-settings-body">
+                  <div class="advanced-group">
+                    <h4>執行控制</h4>
+                    <label class="field compact-field"><span>瀏覽器模式</span><select id="browserModeSelect"><option value="headed" selected>顯示瀏覽器視窗（建議）</option><option value="headless">無頭模式</option></select><small class="help-text">適用單筆與批次下載；工作站 A/B 人工登入固定顯示視窗，Session 健康檢查固定無頭。</small></label>
+                    <p id="browserModeWarning" class="help-text" role="status" hidden>Debug + 無頭模式不會顯示瀏覽器視窗，仍會保存除錯資料；若需觀察操作，請改選顯示瀏覽器視窗。系統將沿用您的選擇。</p>
+                    <label class="field compact-field">
+                      <span>平行執行數</span>
+                      <select id="parallelismSelect">
+                        <option value="1" selected>1 安全模式</option>
+                        <option value="2">2 平行模式：工作站 A/B</option>
+                      </select>
+                      <small class="help-text">若只有一個工作站已儲存 session，請維持 1。</small>
+                    </label>
+                  </div>
+
+                  <div class="advanced-group">
+                    <h4>錯誤處理</h4>
+                    <label class="debug-toggle">
+                      <input id="continueOnErrorToggle" type="checkbox" checked />
+                      <span class="toggle-track" aria-hidden="true"></span>
+                      <span>
+                        <strong>遇錯繼續</strong>
+                        <small>批次內單一報表失敗時，繼續下載後續報表。</small>
+                      </span>
+                    </label>
+
+                    <label class="debug-toggle">
+                      <input id="retryEnabledToggle" type="checkbox" checked />
+                      <span class="toggle-track" aria-hidden="true"></span>
+                      <span>
+                        <strong>失敗自動重試</strong>
+                        <small>只重試暫時性錯誤；參數或定義錯誤不會重試。</small>
+                      </span>
+                    </label>
+
+                    <div class="retry-grid">
+                      <label class="field compact-field">
+                        <span>重試次數</span>
+                        <input id="maxRetriesInput" type="number" min="0" max="10" value="3" />
+                      </label>
+                      <label class="field compact-field">
+                        <span>重試間隔秒數</span>
+                        <input id="retryDelayInput" type="number" min="1" max="300" value="5" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="advanced-group">
+                    <h4>除錯</h4>
+                    <label class="debug-toggle">
+                      <input id="debugToggle" type="checkbox" />
+                      <span class="toggle-track" aria-hidden="true"></span>
+                      <span>
+                        <strong>Debug 記錄</strong>
+                        <small>開啟後記錄流程事件、截圖、頁面與 frame HTML。</small>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </details>
+            </section>
+
+            <div class="right-column" style="display: flex; flex-direction: column; gap: 24px;">
+              <section class="panel batch-queue-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h3>批次待辦清單</h3>
+                    <p>確認已加入的報表，並建立批次下載任務。</p>
+                  </div>
+                  <div class="heading-actions">
+                    <button class="ghost-button compact-button" id="goToBatchOrganizerButton" type="button" title="前往批次範本頁面">批次整理</button>
+                    <button class="ghost-button compact-button danger-button" id="clearBatchButton" type="button">清空</button>
+                  </div>
+                </div>
+                
+                <div class="batch-box" style="border: none; padding: 0; background: transparent; margin-top: 12px;">
+                  <div class="batch-list main-batch-list" id="batchList" style="max-height: 300px; overflow-y: auto;">
+                    <span class="muted">尚未加入報表</span>
+                  </div>
+                  <div style="margin-top: 16px;">
+                    <button class="primary-button" id="createBatchTaskButton" type="button" disabled style="width: 100%;">執行批次下載</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="panel task-status-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h3>任務狀態</h3>
+                    <p>執行進度與解析結果。</p>
+                  </div>
+                  <button class="ghost-button compact-button" id="openDownloadDirButton" type="button">開啟下載資料夾</button>
+                </div>
+
+                <div class="task-summary" id="taskSummary">
+                  <span class="muted">尚未建立任務</span>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+
+        <section class="view-panel" id="presetsView">
+          <section class="panel preset-management-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>批次範本管理</h3>
+                <p>儲存、載入、排序、匯入與匯出常用批次清單。此頁籤與下載任務分離，避免主要畫面過長。</p>
+              </div>
+              <div class="heading-actions">
+                <button class="ghost-button compact-button" id="exportPresetsButton" type="button">匯出</button>
+                <button class="ghost-button compact-button" id="importPresetsButton" type="button">匯入</button>
+                <input id="importPresetsFile" type="file" accept="application/json,.json" hidden />
+              </div>
+            </div>
+
+            <div class="preset-workspace">
+              <div class="preset-box standalone-preset-box">
+                <label class="field compact-field">
+                  <span>範本</span>
+                  <select id="presetSelect"></select>
+                </label>
+
+                <div class="inline-actions">
+                  <button class="ghost-button compact-button" id="loadPresetReplaceButton" type="button">取代載入</button>
+                  <button class="ghost-button compact-button" id="loadPresetAppendButton" type="button">附加載入</button>
+                  <button class="ghost-button compact-button" id="movePresetUpButton" type="button">上移</button>
+                  <button class="ghost-button compact-button" id="movePresetDownButton" type="button">下移</button>
+                </div>
+
+                <label class="field compact-field">
+                  <span>範本名稱</span>
+                  <input id="presetName" placeholder="例如：月報下載" />
+                </label>
+
+                <label class="field compact-field">
+                  <span>描述</span>
+                  <textarea id="presetDescription" class="small-textarea" spellcheck="false" placeholder="說明此批次用途"></textarea>
+                </label>
+
+                <div class="inline-actions">
+                  <button class="ghost-button compact-button" id="newPresetButton" type="button">新範本</button>
+                  <button class="primary-button compact-button" id="savePresetButton" type="button">儲存範本</button>
+                  <button class="ghost-button compact-button danger-button" id="deletePresetButton" type="button">刪除範本</button>
+                </div>
+              </div>
+
+              <div class="current-batch-panel">
+                <div class="batch-heading">
+                  <div>
+                    <strong>目前批次清單</strong>
+                    <p id="presetBatchCount" class="muted small-note">共 0 筆</p>
+                  </div>
+                  <button class="ghost-button compact-button" id="clearBatchButtonFromPreset" type="button">清空</button>
+                </div>
+
+                <div class="batch-list preset-batch-list" id="presetBatchList">
+                  <span class="muted">尚未加入報表</span>
+                </div>
+
+                <div class="batch-parameter-tools">
+                  <label class="field compact-field">
+                    <span>批次修改年度</span>
+                    <input id="batchYearInput" placeholder="例如：114" />
+                  </label>
+                  <button class="ghost-button compact-button" id="applyBatchYearButton" type="button">套用年度</button>
+
+                  <label class="field compact-field">
+                    <span>批次修改階段</span>
+                    <select id="batchStageSelect">
+                      <option value="預算案">預算案</option>
+                      <option value="法定預算">法定預算</option>
+                      <option value="自編決算">自編決算</option>
+                      <option value="院編決算" selected>院編決算</option>
+                      <option value="審定決算">審定決算</option>
+                    </select>
+                  </label>
+                  <button class="ghost-button compact-button" id="applyBatchStageButton" type="button">套用階段</button>
+
+                  <label class="field compact-field">
+                    <span>批次修改輸出格式</span>
+                    <select id="batchOutputFormatSelect">
+                      <option value="pdf">PDF</option>
+                      <option value="excel" selected>Excel</option>
+                      <option value="xml">XML</option>
+                    </select>
+                  </label>
+                  <button class="ghost-button compact-button" id="applyBatchOutputFormatButton" type="button">套用格式</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="view-panel" id="definitionsView">
+          <div class="split-layout definitions-layout">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <h3>建立 EBAS 報表定義</h3>
+                  <p>新增後會出現在下載任務的報表清單。</p>
+                </div>
+              </div>
+
+              <label class="field">
+                <span>報表 ID</span>
+                <input id="definitionId" value="ebas-1103-balance-sheet" placeholder="ebas-1103-balance-sheet" />
+                <small class="help-text">只能使用英數字與連字號，之後建立任務會用這個 ID。</small>
+              </label>
+
+              <label class="field">
+                <span>報表名稱</span>
+                <input id="definitionName" value="EBAS 1103 資產負債表" />
+              </label>
+
+              <label class="field">
+                <span>描述</span>
+                <input id="definitionDescription" value="營業基金決(結)算編製，Excel 下載。" />
+              </label>
+
+              <label class="field">
+                <span>左側選單路徑</span>
+                <textarea id="definitionMenuPath" spellcheck="false">營業基金
+決(結)算
+決算書表
+書表列印
+決算主要表
+資產負債表</textarea>
+                <small class="help-text">每行一層，最後一行是要點選的報表名稱。</small>
+              </label>
+
+              <div class="compact-grid">
+                <label class="field">
+                  <span>業務別</span>
+                  <select id="definitionBusinessType">
+                    <option value="單位" selected>單位</option>
+                    <option value="彙編">彙編</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>營業基金</span>
+                  <input id="definitionFundType" value="決(結)算編製" />
+                </label>
+
+                <label class="field">
+                  <span>年度</span>
+                  <input id="definitionYear" value="114" />
+                </label>
+
+                <label class="field">
+                  <span>階段</span>
+                  <select id="definitionStage">
+                    <option value="預算案">預算案</option>
+                    <option value="法定預算">法定預算</option>
+                    <option value="自編決算">自編決算</option>
+                    <option value="院編決算" selected>院編決算</option>
+                    <option value="審定決算">審定決算</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>輸出格式</span>
+                  <select id="definitionOutputFormat">
+                    <option value="pdf">PDF</option>
+                    <option value="excel" selected>Excel</option>
+                    <option value="xml">XML</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>&#22577;&#34920;&#31278;&#39006;&#38928;&#35373;&#20540;</span>
+                  <input id="definitionKind" placeholder="&#20363;&#22914;&#65306;1.&#22266;&#23450;&#36039;&#29986;&#24314;&#35373;&#25913;&#33391;&#25844;&#20805;&#26126;&#32048;&#34920;" />
+                  <small class="help-text">&#22914;&#26524;&#36889;&#24373;&#22577;&#34920;&#26377;&#22577;&#34920;&#31278;&#39006;&#65292;&#19979;&#36617;&#38913;&#26371;&#39023;&#31034;&#25104;&#21487;&#25163;&#21205;&#36984;&#25887;&#30340;&#19979;&#25289;&#27396;&#20301;&#12290;</small>
+                </label>
+
+                <label class="field">
+                  <span>&#22577;&#34920;&#31278;&#39006;&#36984;&#38917;</span>
+                  <textarea id="definitionKindOptions" class="small-textarea" spellcheck="false" placeholder="1.&#22266;&#23450;&#36039;&#29986;&#24314;&#35373;&#25913;&#33391;&#25844;&#20805;&#26126;&#32048;&#34920;&#10;2.&#22266;&#23450;&#36039;&#29986;&#24314;&#35373;&#25913;&#33391;&#25844;&#20805;&#36039;&#37329;&#20358;&#28304;&#26126;&#32048;&#34920;&#10;3.&#22266;&#23450;&#36039;&#29986;&#24314;&#35373;&#25913;&#33391;&#25844;&#20805;&#35336;&#30059;&#38928;&#26399;&#36914;&#24230;&#26126;&#32048;&#34920;"></textarea>
+                  <small class="help-text">&#19968;&#34892;&#19968;&#20491;&#36984;&#38917;&#65307;&#33509;&#19978;&#26041;&#38928;&#35373;&#20540;&#30041;&#30333;&#65292;&#26371;&#33258;&#21205;&#25505;&#29992;&#31532;&#19968;&#20491;&#36984;&#38917;&#12290;</small>
+                </label>
+
+                <label class="field">
+                  <span>列印層級</span>
+                  <select id="definitionPrintLevel">
+                    <option value="不適用" selected>不適用</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>用途別列印截止層級</span>
+                  <select id="definitionUsagePrintStopLevel">
+                    <option value="不適用" selected>不適用</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>科目層級</span>
+                  <select id="definitionAccountLevel">
+                    <option value="不適用" selected>不適用</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>會計科目</span>
+                  <input id="definitionAccountCode" value="不適用" />
+                </label>
+
+                <label class="field">
+                  <span>會計科目列印層級</span>
+                  <select id="definitionAccountPrintLevel">
+                    <option value="不適用" selected>不適用</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="inline-actions">
+                <button class="ghost-button" id="newDefinitionButton" type="button">新增空白</button>
+                <button class="ghost-button" id="loadSampleDefinitionButton" type="button">載入範例</button>
+                <button class="primary-button" id="saveDefinitionButton" type="button">儲存報表定義</button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <h3>現有 EBAS 定義</h3>
+                  <p>預設僅顯示自訂定義；需要範例時可按「載入範例」。可編輯、複製、刪除，或匯入/匯出定義 JSON。</p>
+                </div>
+                <div class="heading-actions">
+                  <button class="ghost-button compact-button" id="exportDefinitionsButton" type="button">匯出</button>
+                  <button class="ghost-button compact-button" id="importDefinitionsButton" type="button">匯入</button>
+                  <input id="importDefinitionsFile" type="file" accept="application/json,.json" hidden />
+                </div>
+              </div>
+              <div class="definition-list" id="definitionList"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view-panel" id="toolsView">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <h3>MCP 工具清單</h3>
+                <p>目前 server 暴露的高階任務型工具。</p>
+              </div>
+            </div>
+            <div class="tools-list" id="toolsList"></div>
+          </section>
+        </section>
+
+        <section class="view-panel" id="rawView">
+          <div class="split-layout">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <h3>手動呼叫 MCP Tool</h3>
+                  <p>適合測試新工具或排查參數格式。</p>
+                </div>
+              </div>
+
+              <label class="field">
+                <span>Tool</span>
+                <select id="toolSelect"></select>
+              </label>
+
+              <label class="field">
+                <span>Arguments JSON</span>
+                <textarea id="toolArgs" spellcheck="false">{}</textarea>
+              </label>
+
+              <button class="primary-button" id="callToolButton" type="button">呼叫工具</button>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <h3>回應</h3>
+                  <p>MCP tool call 的原始文字內容。</p>
+                </div>
+              </div>
+              <pre id="rawResponse"></pre>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="authModal" class="modal">
+      <div class="panel auth-panel" style="margin: 0; border: none; box-shadow: none;">
+        <div class="panel-heading">
+          <div>
+            <h3>EBAS 人工登入</h3>
+            <p>從 UI 開啟登入頁，手動完成 SSO、MFA、驗證碼或憑證後儲存 session。</p>
+          </div>
+          <div class="heading-actions">
+            <span class="status-pill pending" id="authStatusBadge">未檢查</span>
+            <button class="ghost-button compact-button danger-button" id="closeAuthModalButton" type="button">關閉</button>
+          </div>
+        </div>
+        <div class="auth-body" id="authBody">
+          <div class="worker-grid" id="workerGrid">
+            <span class="muted">正在讀取工作站狀態...</span>
+          </div>
+          <div class="auth-detail" id="authDetail">
+            <span class="muted">每個工作站使用獨立 session；平行下載時會自動分配到已登入工作站。</span>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

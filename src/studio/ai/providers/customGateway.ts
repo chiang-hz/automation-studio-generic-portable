@@ -1,0 +1,8 @@
+import type { AIConnectionTestResult, AIGenerateRequest, AIGenerateResponse, AIProvider, AIProviderConfig } from "../types.ts";
+import { buildAuthHeaders, fetchJson } from "../http.ts";
+interface Shape { text?: string; output?: string; content?: string; model?: string; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }; }
+export class CustomGatewayProvider implements AIProvider {
+  config: AIProviderConfig; constructor(config: AIProviderConfig) { this.config = config; }
+  async generate(request: AIGenerateRequest): Promise<AIGenerateResponse> { const data = await fetchJson<Shape>(this.config, this.config.endpoint, { method: "POST", headers: { "content-type": "application/json", ...buildAuthHeaders(this.config) }, body: JSON.stringify({ model: this.config.model, messages: request.messages, temperature: request.temperature, maxTokens: request.maxTokens, responseFormat: request.responseFormat, metadata: request.metadata }) }); return { providerId: this.config.id, providerKind: this.config.kind, model: data.model ?? this.config.model, text: String(data.text ?? data.output ?? data.content ?? ""), raw: data, usage: data.usage }; }
+  async testConnection(): Promise<AIConnectionTestResult> { const started = Date.now(); const r = await this.generate({ messages: [{ role: "user", content: "Reply with OK only." }], maxTokens: 8, temperature: 0 }); return { ok: Boolean(r.text), message: r.text ? "Connection successful." : "Connected, but no text returned.", latencyMs: Date.now() - started, providerId: this.config.id, providerKind: this.config.kind, model: r.model }; }
+}

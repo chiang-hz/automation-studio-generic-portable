@@ -1,0 +1,73 @@
+# Dependencies and Build Artifacts
+node_modules/
+dist/
+frontend/dist/
+
+# Runtime and Authentication
+.auth/
+runtime/
+debug/
+downloads/
+exports/
+
+# User Data and Logs
+data/profiles/
+data/studio/runs/
+data/studio/*-status.json
+data/studio/settings.json
+data/studio/projects/*
+!data/studio/projects/ebas-report-example/
+!data/studio/projects/generic-example/
+*.log
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+
+# Graphify temporary cache and machine-specific configs
+graphify-out/cache/
+graphify-out/.needs_update
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+graphify-out/20*
+graphify-out/*.sig
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+
+# Development Hotfix and Version Notes (irrelevant to program execution)
+*_HOTFIX.md
+V[0-9]*.md
+V[0-9]*.html
+.vscode/
+
+# Local MCP logs, CLI shims, and test visual reviews
+.playwright-mcp/
+playwright
+playwright.cmd
+playwright.ps1
+verification/
+visual-review/
+
+# Tutorial, Presentations, Slides and Media (教學簡報、投影片、錄影與教學產物)
+output/
+*.ppt
+*.pptx
+*.key
+*.odp
+*簡報*
+*教學*
+*投影片*
+*課程*
+slides/
+presentation/
+presentations/
+tutorials/
+training/
+course/
+*.slide.md
+*.slides.md

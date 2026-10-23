@@ -1,0 +1,9 @@
+import type { AIConnectionTestResult, AIGenerateRequest, AIGenerateResponse, AIProvider, AIProviderConfig } from "../types.ts";
+import { buildAuthHeaders, fetchJson, joinUrl } from "../http.ts";
+import { AIProviderError } from "../errors.ts";
+interface Shape { model?: string; message?: { content?: string }; prompt_eval_count?: number; eval_count?: number; }
+export class OllamaProvider implements AIProvider {
+  config: AIProviderConfig; constructor(config: AIProviderConfig) { this.config = config; }
+  async generate(request: AIGenerateRequest): Promise<AIGenerateResponse> { if (!this.config.model) throw new AIProviderError("Ollama model is required.", { providerId: this.config.id }); const data = await fetchJson<Shape>(this.config, joinUrl(this.config.endpoint, "api/chat"), { method: "POST", headers: { "content-type": "application/json", ...buildAuthHeaders(this.config) }, body: JSON.stringify({ model: this.config.model, stream: false, messages: request.messages, options: { temperature: request.temperature, num_predict: request.maxTokens }, format: request.responseFormat === "json" ? "json" : undefined }) }); const input = data.prompt_eval_count, output = data.eval_count; return { providerId: this.config.id, providerKind: this.config.kind, model: data.model ?? this.config.model, text: data.message?.content ?? "", raw: data, usage: { inputTokens: input, outputTokens: output, totalTokens: input != null && output != null ? input + output : undefined } }; }
+  async testConnection(): Promise<AIConnectionTestResult> { const started = Date.now(); const r = await this.generate({ messages: [{ role: "user", content: "Reply with OK only." }], maxTokens: 8, temperature: 0 }); return { ok: Boolean(r.text), message: r.text ? "Connection successful." : "Connected, but no text returned.", latencyMs: Date.now() - started, providerId: this.config.id, providerKind: this.config.kind, model: r.model }; }
+}

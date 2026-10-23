@@ -1,0 +1,1178 @@
+import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
+import { chromium as baseChromium } from "playwright";
+import { prepareStudioChromium } from "./stealth.ts";
+
+const workflow = JSON.parse(await fs.readFile(new URL("./workflow.json", import.meta.url), "utf8")) as any;
+const input = await fs.readFile("./parameters.json", "utf8").then((text) => JSON.parse(text)).catch(() => ({}));
+const params = Object.fromEntries(workflow.parameters.map((item: any) => [item.name, input[item.name] ?? item.defaultValue ?? (item.type === "boolean" ? false : "")]));
+const variables: Record<string, string | boolean> = {};
+const artifactDir = path.resolve("./artifacts", new Date().toISOString().replace(/[:.]/g, "-"));
+await fs.mkdir(artifactDir, { recursive: true });
+const pdfDownloadDir = path.resolve(process.env.DOWNLOAD_DIR?.trim() || "./downloads");
+const humanizedPlayback = workflow.settings.humanizedPlayback === true;
+
+const ensurePdfDownloadPreference = async (userDataDir: string): Promise<void> => {
+  if (workflow.browser.downloadPdfInsteadOfPreview !== true) return;
+  const profileDir = path.join(userDataDir, "Default");
+  const preferencesPath = path.join(profileDir, "Preferences");
+  await fs.mkdir(profileDir, { recursive: true });
+  let preferences: any = {};
+  try {
+    const text = await fs.readFile(preferencesPath, "utf8");
+    if (text.trim()) preferences = JSON.parse(text);
+  } catch { preferences = {}; }
+  preferences.plugins = { ...(preferences.plugins || {}), always_open_pdf_externally: true };
+  preferences.download = { ...(preferences.download || {}), prompt_for_download: false, open_pdf_in_system_reader: false };
+  const temporary = `${preferencesPath}.automation-studio.tmp`;
+  await fs.writeFile(temporary, JSON.stringify(preferences), "utf8");
+  await fs.rename(temporary, preferencesPath).catch(async () => {
+    await fs.copyFile(temporary, preferencesPath);
+    await fs.rm(temporary, { force: true });
+  });
+};
+
+const launchOptions: any = {
+  headless: workflow.browser.headless,
+  slowMo: humanizedPlayback ? Math.max(workflow.browser.slowMoMs, 120) : workflow.browser.slowMoMs,
+  channel: workflow.browser.channel === "bundled" ? undefined : workflow.browser.channel,
+  executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined
+};
+const cdpMode = workflow.browser.connectionMode === "cdp";
+const chromium = await prepareStudioChromium({ chromium: baseChromium }, workflow.browser);
+if (workflow.browser.stealth === true) console.log(cdpMode ? "[Stealth] CDP 不套用 Stealth" : "[Stealth] 已啟用");
+let browser: any;
+let context: any;
+let page: any;
+if (cdpMode) {
+  const endpoint = String(workflow.browser.cdpEndpoint || "http://127.0.0.1:9222").trim();
+  const parsed = new URL(endpoint);
+  if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(parsed.hostname.toLowerCase())) {
+    throw new Error("CDP 匯出流程只允許連線本機 localhost / 127.0.0.1 / ::1");
+  }
+  try {
+    browser = await chromium.connectOverCDP(endpoint);
+  } catch (firstError) {
+    if (workflow.browser.cdpAutoLaunch === false) throw firstError;
+    const candidates = process.platform === "win32"
+      ? [process.env.CHROME_PATH, process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe"), process.env["PROGRAMFILES(X86)"] && path.join(process.env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe"), process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe")].filter(Boolean)
+      : process.platform === "darwin" ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"] : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"];
+    const executable = candidates.find((item: any) => existsSync(String(item)));
+    if (!executable) throw new Error("找不到 Google Chrome，無法自動啟動 CDP。請設定 CHROME_PATH 或手動啟動 Chrome。", { cause: firstError });
+    const port = parsed.port || "9222";
+    const profileDir = process.platform === "win32" ? path.join(process.env.LOCALAPPDATA || os.homedir(), "AutomationStudio", "ChromeCDPProfile") : path.join(os.homedir(), ".automation-studio", "ChromeCDPProfile");
+    await fs.mkdir(profileDir, { recursive: true });
+    await ensurePdfDownloadPreference(profileDir);
+    const child = spawn(String(executable), ["--remote-debugging-address=127.0.0.1", `--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { detached: true, stdio: "ignore" });
+    child.unref();
+    const deadline = Date.now() + 20000;
+    let lastError: any = firstError;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try { browser = await chromium.connectOverCDP(endpoint, { timeout: 2000 }); break; } catch (error) { lastError = error; }
+    }
+    if (!browser) throw new Error(`已嘗試自動啟動 Chrome，但仍無法連線 CDP：${lastError?.message || lastError}`);
+  }
+  context = browser.contexts()[0];
+  if (!context) throw new Error("CDP 已連線，但找不到 Chrome 預設工作階段");
+  const pages = context.pages().filter((item: any) => !item.isClosed?.() && !/^(devtools|chrome-extension):/i.test(String(item.url?.() ?? "")));
+  if (!pages.length) throw new Error("CDP 已連線，但目前沒有可控制分頁");
+  const mode = workflow.browser.cdpInitialPageMode || "first";
+  if (mode === "url") {
+    const target = String(workflow.browser.cdpInitialPageTarget || "");
+    page = pages.find((item: any) => item.url().includes(target));
+    if (!page) throw new Error(`找不到網址包含「${target}」的 Chrome 分頁`);
+  } else if (mode === "index") {
+    const index = Math.max(1, Math.trunc(Number(workflow.browser.cdpInitialPageIndex || 1)));
+    page = pages[index - 1];
+    if (!page) throw new Error(`Chrome 目前只有 ${pages.length} 個分頁，無法選擇第 ${index} 個`);
+  } else {
+    page = pages[0];
+  }
+} else if (workflow.browser.reuseProfile) {
+  const persistentProfileDir = path.resolve("./.auth/workflow-profile");
+  await ensurePdfDownloadPreference(persistentProfileDir);
+  context = await chromium.launchPersistentContext(persistentProfileDir, {
+    ...launchOptions,
+    acceptDownloads: true,
+    viewport: { width: 1440, height: 900 }
+  });
+  page = context.pages()[0] ?? await context.newPage();
+} else {
+  browser = await chromium.launch(launchOptions);
+  context = await browser.newContext({
+    acceptDownloads: true,
+    viewport: { width: 1440, height: 900 }
+  });
+  page = context.pages()[0] ?? await context.newPage();
+}
+page.setDefaultTimeout(workflow.browser.defaultTimeoutMs);
+const namedTabs = new Map<string, any>();
+const safePlayback = workflow.settings.safePlayback !== false;
+const stepDelayMs = Math.max(500, Math.min(10000, Number(workflow.settings.minStepDelayMs ?? 2000)));
+
+const expand = (value: unknown): string => String(value ?? "").replace(/{{\s*([^}]+)\s*}}/g, (_match, name) => String(variables[name.trim()] ?? params[name.trim()] ?? ""));
+const stableCss = (value: string): string => {
+  if (!/google\.[a-z.]+\/url\?|client=internal-element-cse|[?&](?:ved|usg|fexp)=/i.test(value)) return value;
+  const title = value.match(/^([a-z][\w-]*).*?(\[title="(?:\\.|[^"])*"\])/i);
+  return title ? `${title[1]}${title[2]}:visible` : value;
+};
+const event = async (type: string, data: Record<string, unknown> = {}): Promise<void> => {
+  await fs.appendFile(path.join(artifactDir, "events.jsonl"), `${JSON.stringify({ at: new Date().toISOString(), type, ...data })}\n`, "utf8");
+};
+const normalizeDomain = (value: string): string => {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (raw.startsWith("*.")) return `*.${raw.slice(2).replace(/^\.+|\.+$/g, "")}`;
+  try { return new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase(); } catch { return raw; }
+};
+const hostAllowed = (hostname: string): boolean => !workflow.allowedDomains?.length || workflow.allowedDomains.some((entry: string) => {
+  const domain = normalizeDomain(entry);
+  return domain.startsWith("*.") ? hostname !== domain.slice(2) && hostname.endsWith(`.${domain.slice(2)}`) : hostname === domain;
+});
+const allowed = (rawUrl: string): void => {
+  const parsed = new URL(rawUrl);
+  if (!/^https?:$/.test(parsed.protocol)) throw new Error(`不允許的網址協定：${parsed.protocol}`);
+  if (!hostAllowed(parsed.hostname.toLowerCase())) throw new Error(`網址網域 ${parsed.hostname} 不在允許清單內`);
+};
+const collectNavigateHosts = (steps: any[], result: string[] = []): string[] => {
+  for (const step of steps ?? []) {
+    if (!step.enabled) continue;
+    if (step.kind === "navigate" || step.kind === "newTab") {
+      const url = expand(step.url || step.value || (step.kind === "navigate" ? workflow.targetUrl : ""));
+      if (/^https?:/i.test(url)) result.push(new URL(url).hostname.toLowerCase());
+    }
+    collectNavigateHosts(step.thenSteps ?? [], result);
+    collectNavigateHosts(step.elseSteps ?? [], result);
+    collectNavigateHosts(step.steps ?? [], result);
+  }
+  return result;
+};
+const requiredHosts = Array.from(new Set(collectNavigateHosts(workflow.steps ?? [])));
+const missingHosts = requiredHosts.filter((host: string) => !hostAllowed(host));
+if (missingHosts.length) throw new Error(`執行前檢查失敗：尚未允許網域 ${missingHosts.join(", ")}`);
+const scopeOf = (step: any): any => {
+  if (!step.frame) return page;
+  if (step.frame.selector) return page.frameLocator(step.frame.selector);
+  const frame = page.frames().find((item: any) =>
+    (step.frame.name && item.name() === step.frame.name) ||
+    (step.frame.urlIncludes && item.url().includes(step.frame.urlIncludes))
+  );
+  if (!frame) throw new Error(`找不到步驟 ${step.name} 指定的 frame`);
+  return frame;
+};
+const optionalScopeOf = (step: any): any | undefined => {
+  try { return scopeOf(step); } catch { return undefined; }
+};
+const orderedScopes = (step: any): any[] => {
+  const preferred = step.frame ? optionalScopeOf(step) : undefined;
+  const scopes = [preferred, page, ...page.frames().filter((frame: any) => frame !== page.mainFrame?.())].filter(Boolean);
+  const seen = new Set<any>();
+  return scopes.filter((scope: any) => { if (seen.has(scope)) return false; seen.add(scope); return true; });
+};
+const locate = async (step: any, override?: any[]): Promise<any> => {
+  const scopes = step.autoFrameSearch ? orderedScopes(step) : [scopeOf(step)];
+  const errors: string[] = [];
+  for (const scope of scopes) {
+  for (const rule of override ?? step.selectors ?? []) {
+    if (rule.strategy === "component") continue;
+    const expanded = expand(rule.value);
+    const value = rule.strategy === "css" ? stableCss(expanded) : expanded;
+    try {
+      let locator: any;
+      if (rule.strategy === "role") locator = scope.getByRole(rule.role || "button", { name: value, exact: rule.exact });
+      else if (rule.strategy === "label") locator = scope.getByLabel(value, { exact: rule.exact });
+      else if (rule.strategy === "placeholder") locator = scope.getByPlaceholder(value, { exact: rule.exact });
+      else if (rule.strategy === "text") locator = scope.getByText(value, { exact: rule.exact });
+      else if (rule.strategy === "testId") locator = scope.getByTestId(value);
+      else if (rule.strategy === "name") locator = scope.locator(`[name=${JSON.stringify(value)}]`);
+      else if (rule.strategy === "xpath") locator = scope.locator(`xpath=${value}`);
+      else locator = scope.locator(value);
+      const visible = step.kind === "upload" ? locator : locator.filter({ visible: true });
+      const count = await visible.count();
+      if (count > 0) {
+        const mode = step.matchMode ?? "unique";
+        if (mode === "first") return visible.first();
+        if (mode === "last") return visible.last();
+        if (mode === "nth") {
+          const requested = Math.max(1, Math.trunc(Number(step.matchIndex ?? 1)));
+          if (requested <= count) return visible.nth(requested - 1);
+          errors.push(`${rule.strategy}:${value} 只有 ${count} 個可見元件，無法選取第 ${requested} 筆`);
+          continue;
+        }
+        if (count === 1) return visible.first();
+        errors.push(`${rule.strategy}:${value} 找到 ${count} 個可見元件，定位不唯一`);
+        continue;
+      }
+      errors.push(`${rule.strategy}:${value}`);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  }
+  throw new Error(`所有定位方式均失敗：${errors.join("；")}`);
+};
+const waitFor = async (rule: any, autoFrameSearch = false): Promise<void> => {
+  if (!rule) return;
+  autoFrameSearch = autoFrameSearch || rule.autoFrameSearch === true;
+  const timeout = rule.timeoutMs ?? workflow.browser.defaultTimeoutMs;
+  const expanded = expand(rule.value);
+  const value = ["visible", "hidden", "attached"].includes(rule.kind) ? stableCss(expanded) : expanded;
+  if (rule.kind === "timeout") await page.waitForTimeout(rule.timeoutMs ?? Number(value || 1000));
+  else if (rule.kind === "networkIdle") await page.waitForLoadState("networkidle", { timeout });
+  else if (rule.kind === "url") await page.waitForURL(value, { timeout });
+  else if (rule.kind === "visible" || rule.kind === "attached") {
+    if (autoFrameSearch) {
+      const deadline = Date.now() + timeout;
+      let matched = false;
+      while (Date.now() <= deadline && !matched) {
+        const scopes = [page, ...page.frames().filter((frame: any) => frame !== page.mainFrame?.())];
+        for (const scope of scopes) {
+          const locator = scope.locator(value);
+          const count = await locator.count().catch(() => 0);
+          if (rule.kind === "attached" && count > 0) { matched = true; break; }
+          if (rule.kind === "visible") {
+            for (let index = 0; index < Math.min(count, 100); index += 1) {
+              if (await locator.nth(index).isVisible().catch(() => false)) { matched = true; break; }
+            }
+          }
+          if (matched) break;
+        }
+        if (!matched) await page.waitForTimeout(200);
+      }
+      if (!matched) throw new Error(`等待元素逾時：${value}`);
+    } else await page.locator(value).first().waitFor({ state: rule.kind, timeout });
+  } else await page.locator(value).waitFor({ state: rule.kind, timeout });
+};
+const isVerificationPage = async (): Promise<boolean> => {
+  if (/captcha|challenge|recaptcha|turnstile/i.test(page.url())) return true;
+  const frameCount = await page.locator('iframe[src*="recaptcha" i],iframe[src*="turnstile" i],iframe[title*="challenge" i]').count().catch(() => 0);
+  if (frameCount) return true;
+  const text = await page.locator("body").innerText({ timeout: 2000 }).catch(() => "");
+  return /機器人驗證|驗證您是人類|安全驗證|verify you are human|checking your browser/i.test(text);
+};
+const verify = async (step: any): Promise<void> => {
+  const rule = step.verification;
+  if (!rule || rule.kind === "download") return;
+  const expected = typeof rule.expected === "string" ? expand(rule.expected) : rule.expected;
+  if (rule.kind === "url") {
+    if (!page.url().includes(String(expected ?? ""))) throw new Error(`網址驗證失敗：${page.url()}`);
+    return;
+  }
+  const locator = await locate(step, rule.selector ?? step.selectors);
+  const timeout = rule.timeoutMs ?? step.timeoutMs ?? workflow.browser.defaultTimeoutMs;
+  if (rule.kind === "visible" || rule.kind === "hidden") await locator.waitFor({ state: rule.kind, timeout });
+  else if (rule.kind === "exists" && !(await locator.count())) throw new Error("驗證失敗：元件不存在");
+  else if (rule.kind === "value") {
+    const deadline = Date.now() + timeout;
+    let actual = await locator.inputValue();
+    while (actual !== String(expected ?? "") && Date.now() < deadline) {
+      await page.waitForTimeout(Math.min(200, Math.max(1, deadline - Date.now())));
+      actual = await locator.inputValue();
+    }
+    if (actual !== String(expected ?? "")) throw new Error(`欄位值驗證失敗。預期 ${expected}，實際 ${actual}`);
+  } else if (rule.kind === "text") {
+    const deadline = Date.now() + timeout;
+    let actual = (await locator.textContent())?.trim() ?? "";
+    while (!actual.includes(String(expected ?? "")) && Date.now() < deadline) {
+      await page.waitForTimeout(Math.min(200, Math.max(1, deadline - Date.now())));
+      actual = (await locator.textContent())?.trim() ?? "";
+    }
+    if (!actual.includes(String(expected ?? ""))) throw new Error(`文字驗證失敗。預期 ${expected}，實際 ${actual}`);
+  } else if (rule.kind === "checked" && (await locator.isChecked()) !== Boolean(expected)) {
+    throw new Error(`勾選狀態驗證失敗。預期 ${expected}`);
+  }
+};
+const manualAction = async (step: any): Promise<void> => {
+  if (workflow.browser.headless) throw new Error("人工操作步驟需要顯示瀏覽器；請關閉背景模式後再執行。");
+  const mode = step.manualCompletionMode ?? (step.verification?.kind === "url" ? "url" : step.verification ? "element" : "button");
+  const instruction = expand(step.value || step.description || "請在瀏覽器中完成操作。");
+  const verification = mode === "url"
+    ? { kind: "url", expected: step.manualExpected ?? step.verification?.expected ?? "" }
+    : mode === "element"
+      ? { kind: "visible", selector: step.selectors?.length ? step.selectors : step.verification?.selector }
+      : undefined;
+  await event("manual_action_required", { stepId: step.id, instruction, completionMode: mode, verification });
+  if (mode === "button") {
+    if (!process.stdin.isTTY) throw new Error("手動繼續模式需要互動式終端機。");
+    console.log(`\n[人工操作] ${instruction}\n完成後請回到此視窗按 Enter 繼續...`);
+    await new Promise<void>((resolve) => process.stdin.once("data", () => resolve()));
+    await event("manual_action_completed", { stepId: step.id, url: page.url(), completionMode: mode });
+    return;
+  }
+  if (mode === "url" && !String(verification?.expected ?? "").trim()) throw new Error("網址符合模式缺少網址條件。");
+  if (mode === "element" && !verification?.selector?.length) throw new Error("指定元素出現模式缺少 selector。");
+  const deadline = Date.now() + (step.timeoutMs ?? 300000);
+  while (Date.now() < deadline) {
+    try {
+      await verify({ ...step, verification });
+      await event("manual_action_completed", { stepId: step.id, url: page.url(), completionMode: mode });
+      return;
+    } catch {
+      await page.waitForTimeout(500);
+    }
+  }
+  throw new Error(`人工操作步驟逾時：${instruction}`);
+};
+const componentAction = async (step: any): Promise<void> => {
+  const targetPath = step.componentPath ?? step.selectors?.find((item: any) => item.strategy === "component")?.value;
+  if (!targetPath) throw new Error("缺少 componentPath");
+  await scopeOf(step).evaluate(({ targetPath, kind, value, adapter }: any) => {
+    const win = window as any;
+    const direct = targetPath.split(".").reduce((current: any, key: string) => current?.[key], win);
+    const component = direct ?? win.Ext?.getCmp?.(targetPath);
+    if (!component) throw new Error(`找不到頁面元件 ${targetPath}`);
+    if (kind === "fill" || kind === "select") component.setValue?.(value);
+    else if (kind === "check") component.setValue?.(adapter === "ksi" ? value || true : true);
+    else if (kind === "uncheck") component.setValue?.(false);
+    else if (kind === "click") component.fireEvent?.("click", component);
+    component.fireEvent?.("change", component, component.getValue?.());
+    component.fireEvent?.("select", component, component.getStore?.()?.findRecord?.("value", value));
+  }, { targetPath, kind: step.kind, value: expand(step.value), adapter: step.adapter });
+};
+const conditionMatches = async (rule: any): Promise<boolean> => {
+  let actual: unknown;
+  if (rule.source === "parameter") actual = params[rule.name ?? ""];
+  else if (rule.source === "variable") actual = variables[rule.name ?? ""];
+  else if (rule.source === "url") actual = page.url();
+  else actual = await locate({ ...rule, frame: rule.frame }, rule.selector).then((item) => item.count()).catch(() => 0);
+  const expected = expand(rule.value);
+  if (rule.operator === "exists") return Boolean(actual);
+  if (rule.operator === "notExists") return !actual;
+  if (rule.operator === "equals") return String(actual) === expected;
+  if (rule.operator === "notEquals") return String(actual) !== expected;
+  return String(actual).includes(expected);
+};
+const safeFile = (value: string): string => {
+  const cleaned = value.replace(/[<>:"/\\|?*\x00-\x1f]/g, "-").trim() || "artifact";
+  const extension = path.extname(cleaned);
+  const base = extension ? cleaned.slice(0, -extension.length) : cleaned;
+  const maximum = 180;
+  if (cleaned.length <= maximum) return cleaned;
+  if (extension && extension.length < maximum) return `${base.slice(0, maximum - extension.length)}${extension}`;
+  return base.slice(0, maximum) || "artifact";
+};
+const pagePdfFilename = (configured: string, fallback: string, useLocalTime: boolean): string => {
+  const lastPart = String(configured || fallback || "page").trim().split(/[\\/]/).at(-1) || "page";
+  const safe = lastPart.replace(/[<>:"|?*\x00-\x1f]/g, "-").replace(/[. ]+$/g, "").trim();
+  const base = (safe.replace(/\.pdf$/i, "").replace(/\.[^.]+$/, "").replace(/[_-]\d{8}_\d{6}$/, "").trim() || "page").slice(0, 150);
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  return safeFile(`${base}${useLocalTime ? `_${timestamp}` : ""}.pdf`);
+};
+const nextPdfPath = async (fileName: string): Promise<string> => {
+  await fs.mkdir(pdfDownloadDir, { recursive: true });
+  const extension = path.extname(fileName);
+  const base = extension ? fileName.slice(0, -extension.length) : fileName;
+  for (let index = 1; index < 10000; index += 1) {
+    const candidate = path.join(pdfDownloadDir, index === 1 ? fileName : `${base} (${index})${extension}`);
+    try { await fs.access(candidate); } catch { return candidate; }
+  }
+  throw new Error("無法在預設下載資料夾中取得可用的 PDF 檔名。");
+};
+
+function decodedDownloadNameFromUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    for (const key of ["n", "u"]) {
+      const encoded = parsed.searchParams.get(key);
+      if (!encoded) continue;
+      try {
+        const decoded = Buffer.from(encoded, "base64").toString("utf8").trim();
+        if (!decoded) continue;
+        const normalized = decoded.replace(/\\/g, "/");
+        const name = path.basename(normalized);
+        if (name && path.extname(name)) return name;
+      } catch { /* not a base64 filename/path */ }
+    }
+  } catch { /* invalid URL */ }
+  return "";
+}
+
+const isPdfResponse = (response: any): boolean => {
+  const status = Number(response.status?.() ?? 0);
+  if (status < 200 || status >= 400) return false;
+  const headers = response.headers?.() ?? {};
+  const contentType = String(headers["content-type"] ?? "").toLowerCase();
+  const disposition = String(headers["content-disposition"] ?? "").toLowerCase();
+  const contentRange = String(headers["content-range"] ?? "");
+  const url = String(response.url?.() ?? "");
+  if (/^bytes\s+\d+-/i.test(contentRange) && !/^bytes\s+0-/i.test(contentRange)) return false;
+  const encodedName = decodedDownloadNameFromUrl(url);
+  return contentType.includes("application/pdf") || /\.pdf(?:$|[?#])/i.test(url) || /filename[^;=]*=[^;]*\.pdf/i.test(disposition) || /\.pdf$/i.test(encodedName);
+};
+const pdfFilename = (response: any, step: any): string => {
+  const headers = response.headers?.() ?? {};
+  const disposition = String(headers["content-disposition"] ?? "");
+  const encoded = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1];
+  const quoted = disposition.match(/filename\s*=\s*["']?([^;"']+)/i)?.[1];
+  let urlName = "";
+  try { urlName = decodeURIComponent(path.basename(new URL(response.url()).pathname)); } catch { /* use step name */ }
+  const queryName = decodedDownloadNameFromUrl(response.url());
+  const fallback = step.name && /\.pdf$/i.test(step.name) ? step.name : `${step.name || step.id}.pdf`;
+  const name = encoded ? decodeURIComponent(encoded) : quoted || (queryName && /\.pdf$/i.test(queryName) ? queryName : "") || (urlName && /\.pdf$/i.test(urlName) ? urlName : fallback);
+  return safeFile(name.toLowerCase().endsWith(".pdf") ? name : `${name}.pdf`);
+};
+const downloadFileName = (originalName: string, step: any): string => {
+  if (step.downloadFileNameMode !== "custom") return safeFile(originalName);
+  const configured = expand(step.downloadFileName ?? "").trim();
+  if (!configured) throw new Error("下載檔名已設定為自訂，但尚未填入名稱。");
+  const extension = path.extname(originalName);
+  const base = path.basename(configured, path.extname(configured)).trim() || "download";
+  return safeFile(`${base}${extension}`);
+};
+const delay = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const randomBetween = (min: number, max: number): number => Math.floor(min + Math.random() * (max - min + 1));
+const prepareInteraction = async (locator: any, timeout: number): Promise<void> => {
+  await locator.scrollIntoViewIfNeeded({ timeout }).catch(() => undefined);
+  if (humanizedPlayback) {
+    const box = await locator.boundingBox?.().catch(() => undefined);
+    if (box && page.mouse?.move) {
+      await page.mouse.move(
+        box.x + box.width * randomBetween(35, 65) / 100,
+        box.y + box.height * randomBetween(35, 65) / 100,
+        { steps: randomBetween(8, 16) }
+      );
+    }
+    await page.waitForTimeout(randomBetween(180, 420));
+  } else if (safePlayback) await page.waitForTimeout(350);
+};
+const fillLocator = async (locator: any, value: string, timeout: number): Promise<void> => {
+  if (!humanizedPlayback) return locator.fill(value);
+  await locator.click({ timeout });
+  await locator.fill("");
+  const typingDelay = randomBetween(55, 115);
+  if (typeof locator.pressSequentially === "function") await locator.pressSequentially(value, { delay: typingDelay });
+  else if (typeof locator.type === "function") await locator.type(value, { delay: typingDelay });
+  else await locator.fill(value);
+};
+const pageClosed = (): boolean => { try { return page.isClosed(); } catch { return true; } };
+const waitForPdfResponse = async (item: any, timeout: number, step: any): Promise<any> => {
+  const response = await item.waitForEvent("response", { timeout, predicate: (candidate: any) => isPdfResponse(candidate) });
+  const body = Buffer.from(await response.body());
+  if (!body.subarray(0, 5).toString("ascii").startsWith("%PDF-")) throw new Error(`PDF 回應內容格式不正確：${response.url()}`);
+  return { kind: "pdf-response", body, filename: pdfFilename(response, step), url: response.url() };
+};
+const captureFromPage = async (item: any, timeout: number, step: any): Promise<any> => Promise.any([
+  item.waitForEvent("download", { timeout }).then((download: any) => ({ kind: "download", download, url: download.url?.(), stagedFilePromise: stageNativeDownload(download) })),
+  waitForPdfResponse(item, timeout, step)
+]);
+const responseDownloadFilename = (response: any, url: string, step: any): string => {
+  const headers = response.headers?.() ?? {};
+  const disposition = String(headers["content-disposition"] ?? "");
+  const encoded = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1];
+  const quoted = disposition.match(/filename\s*=\s*["']?([^;"']+)/i)?.[1];
+  const urlName = (() => { try { return decodeURIComponent(path.basename(new URL(url).pathname)); } catch { return ""; } })();
+  const contentType = String(headers["content-type"] ?? "").toLowerCase();
+  const queryName = decodedDownloadNameFromUrl(url);
+  let name = encoded ? decodeURIComponent(encoded) : quoted || queryName || urlName || step.name || step.id;
+  if (!path.extname(name) && contentType.includes("application/pdf")) name += ".pdf";
+  if (!path.extname(name)) name += ".bin";
+  return safeFile(name);
+};
+const likelyPdfDownloadUrl = (url: string): boolean => /\.pdf(?:$|[?#])/i.test(url) || /\.pdf$/i.test(decodedDownloadNameFromUrl(url));
+const preparePdfAnchorForDirectDownload = async (locator: any, url: string): Promise<void> => {
+  if (workflow.browser.downloadPdfInsteadOfPreview !== true || !likelyPdfDownloadUrl(url)) return;
+  const filename = decodedDownloadNameFromUrl(url) || "download.pdf";
+  await locator.evaluate((element: Element, suggestedName: string) => {
+    const anchor = element instanceof HTMLAnchorElement ? element : element.closest("a");
+    if (!anchor) return;
+    anchor.removeAttribute("target");
+    if (!anchor.getAttribute("download")) anchor.setAttribute("download", suggestedName);
+  }, filename).catch(() => undefined);
+};
+const snapshotDownloadRecoveryHeaders = async (url: string): Promise<Record<string, string>> => {
+  const headers: Record<string, string> = {};
+  try {
+    const userAgent = String(await page.evaluate(() => navigator.userAgent) ?? "").replace(/[\r\n]+/g, " ").trim();
+    if (userAgent) headers["User-Agent"] = userAgent;
+  } catch { /* best effort */ }
+  try {
+    const referer = String(page.url?.() ?? "").replace(/[\r\n]+/g, " ").trim();
+    if (/^https?:/i.test(referer)) headers.Referer = referer;
+  } catch { /* best effort */ }
+  try {
+    const cookies = await context.cookies(url);
+    const cookieHeader = (cookies ?? []).map((cookie: any) => `${cookie.name}=${cookie.value}`).join("; ");
+    if (cookieHeader) headers.Cookie = cookieHeader;
+  } catch { /* best effort */ }
+  return headers;
+};
+
+const directDownloadFrom = async (step: any): Promise<any | undefined> => {
+  const locator = await locate(step);
+  const url = await locator.evaluate((element: Element) => {
+    const anchor = element instanceof HTMLAnchorElement ? element : element.closest("a");
+    return anchor?.href ?? "";
+  }).catch(() => "");
+  if (!url) return undefined;
+  allowed(url);
+  const response = await context.request.get(url, { timeout: step.timeoutMs ?? workflow.browser.downloadTimeoutMs });
+  if (!response.ok()) throw new Error(`直接下載失敗：HTTP ${response.status()}。`);
+  const body = Buffer.from(await response.body());
+  if (!body.length) throw new Error("直接下載內容為空白。");
+  return { kind: "direct-response", body, filename: responseDownloadFilename(response, url, step), url };
+};
+const browserNavigationFrom = async (step: any): Promise<any | undefined> => {
+  const locator = await locate(step);
+  const url = await locator.evaluate((element: Element) => {
+    const anchor = element instanceof HTMLAnchorElement ? element : element.closest("a");
+    return anchor?.href ?? "";
+  }).catch(() => "");
+  if (!url) return undefined;
+  allowed(url);
+  const recoveryHeaders = await snapshotDownloadRecoveryHeaders(url);
+  const tempPage = await context.newPage();
+  let keepPageOpen = false;
+  try {
+    const timeout = step.timeoutMs ?? workflow.browser.downloadTimeoutMs;
+    const nativeDownload = tempPage.waitForEvent("download", { timeout })
+      .then((download: any) => ({ kind: "download", download, url: download.url?.() || url, popup: tempPage, stagedFilePromise: stageNativeDownload(download), recoveryHeaders }))
+      .catch(() => undefined);
+    const navigationCapture = tempPage.goto(url, { waitUntil: "commit", timeout })
+      .then(async (response: any) => {
+        if (!response) return undefined;
+        let body: Buffer;
+        try { body = Buffer.from(await response.body()); } catch { return undefined; }
+        if (!body.length || !body.subarray(0, 5).toString("ascii").startsWith("%PDF-")) return undefined;
+        return { kind: "pdf-response", body, filename: responseDownloadFilename(response, url, step), url, popup: tempPage };
+      })
+      .catch(() => undefined);
+    const first = await Promise.race([nativeDownload, navigationCapture]);
+    if (first) { keepPageOpen = true; return first; }
+    const second = await Promise.race([
+      Promise.all([nativeDownload, navigationCapture]).then(([download, navigation]) => download ?? navigation),
+      delay(Math.min(1500, Math.max(250, Math.trunc(timeout / 10)))).then(() => undefined)
+    ]);
+    if (second) { keepPageOpen = true; return second; }
+    return undefined;
+  } finally {
+    if (!keepPageOpen && !tempPage.isClosed?.()) await tempPage.close().catch(() => undefined);
+  }
+};
+const isCertificateTrustError = (error: unknown): boolean => {
+  const messages: string[] = [];
+  let current: any = error;
+  const seen = new Set<any>();
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    messages.push(current instanceof Error ? current.message : String(current));
+    current = current?.cause;
+  }
+  const text = messages.join(" ").toLowerCase();
+  return ["unable to get local issuer certificate", "unable to verify the first certificate", "self signed certificate", "self-signed certificate", "depth_zero_self_signed_cert", "unable_to_get_issuer_cert", "unable_to_verify_leaf_signature"].some((needle) => text.includes(needle));
+};
+const saveDownloadStream = async (download: any, filePath: string): Promise<boolean> => {
+  if (typeof download?.createReadStream !== "function") return false;
+  const stream = await download.createReadStream();
+  if (!stream) return false;
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  const body = Buffer.concat(chunks);
+  if (!body.length) return false;
+  await fs.writeFile(filePath, body);
+  return true;
+};
+const stageNativeDownload = async (download: any): Promise<string | undefined> => {
+  const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), "automation-studio-download-"));
+  const stagedPath = path.join(stagingDir, safeFile(download.suggestedFilename?.() || "download.bin"));
+  try {
+    if (typeof download?.path === "function") {
+      const browserOwnedPath = await download.path();
+      if (browserOwnedPath) {
+        await fs.copyFile(browserOwnedPath, stagedPath);
+        const stat = await fs.stat(stagedPath);
+        if (stat.size) return stagedPath;
+      }
+    }
+  } catch { /* continue with legacy staging methods */ }
+  try {
+    await download.saveAs(stagedPath);
+    const stat = await fs.stat(stagedPath);
+    if (!stat.size) throw new Error("staged download is empty");
+    return stagedPath;
+  } catch {
+    try { if (await saveDownloadStream(download, stagedPath)) return stagedPath; } catch { /* fall through */ }
+    await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    return undefined;
+  }
+};
+const waitForCompletedBrowserFile = async (stagingDir: string, url: string, timeoutMs: number): Promise<any> => {
+  const deadline = Date.now() + Math.max(1000, timeoutMs);
+  const previousSizes = new Map<string, number>();
+  while (Date.now() <= deadline) {
+    const entries = await fs.readdir(stagingDir, { withFileTypes: true }).catch(() => [] as any[]);
+    const names = entries.filter((entry: any) => entry.isFile?.()).map((entry: any) => String(entry.name));
+    const partialNames = new Set(names.filter((name: string) => /\.(?:crdownload|tmp)$/i.test(name)));
+    const completed = names.filter((name: string) => !/\.(?:crdownload|tmp)$/i.test(name));
+    for (const name of completed) {
+      const candidate = path.join(stagingDir, name);
+      const stat = await fs.stat(candidate).catch(() => undefined);
+      if (!stat?.size) continue;
+      const previousSize = previousSizes.get(candidate);
+      previousSizes.set(candidate, stat.size);
+      if (partialNames.has(`${name}.crdownload`) || partialNames.has(`${name}.tmp`) || previousSize !== stat.size) continue;
+      if (likelyPdfDownloadUrl(url)) {
+        const handle = await fs.open(candidate, "r").catch(() => undefined);
+        if (!handle) continue;
+        try {
+          const header = Buffer.alloc(5);
+          const read = await handle.read(header, 0, 5, 0);
+          if (read.bytesRead < 5 || header.toString("ascii") !== "%PDF-") continue;
+        } finally { await handle.close().catch(() => undefined); }
+      }
+      return { kind: "browser-file", stagedPath: candidate, stagingDir, filename: decodedDownloadNameFromUrl(url) || safeFile(name), url };
+    }
+    await delay(150);
+  }
+  throw new Error(`Chrome 已接管下載路徑，但在 ${timeoutMs} ms 內沒有找到完整下載檔案。`);
+};
+
+const cdpNetworkResourceDownload = async (url: string, timeoutMs: number, step: any): Promise<any> => {
+  if (!url || !likelyPdfDownloadUrl(url) || typeof context?.newCDPSession !== "function") return undefined;
+  allowed(url);
+  const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), "automation-studio-cdp-resource-"));
+  let session: any;
+  let streamHandle = "";
+  let output: any;
+  try {
+    session = await context.newCDPSession(page);
+    const frameTree = await session.send("Page.getFrameTree");
+    const frameId = String(frameTree?.frameTree?.frame?.id ?? "");
+    if (!frameId) throw new Error("CDP main frame id is unavailable.");
+    const loaded: any = await Promise.race([
+      session.send("Network.loadNetworkResource", {
+        frameId,
+        url,
+        options: { disableCache: true, includeCredentials: true }
+      }),
+      delay(Math.max(1000, timeoutMs)).then(() => { throw new Error(`CDP resource download timed out (${timeoutMs} ms).`); })
+    ]);
+    const resource = loaded?.resource;
+    if (!resource?.success) throw new Error(`CDP resource download failed${resource?.netErrorName ? `: ${resource.netErrorName}` : "."}`);
+    const status = Number(resource.httpStatusCode ?? 0);
+    if (status && (status < 200 || status >= 400)) throw new Error(`CDP resource download returned HTTP ${status}.`);
+    streamHandle = String(resource.stream ?? "");
+    if (!streamHandle) throw new Error("CDP resource download did not return a stream.");
+    const filename = safeFile(decodedDownloadNameFromUrl(url) || (step?.name && /\.pdf$/i.test(step.name) ? step.name : `${step?.name || step?.id || "download"}.pdf`));
+    const stagedPath = path.join(stagingDir, filename);
+    output = await fs.open(stagedPath, "w");
+    while (true) {
+      const part: any = await session.send("IO.read", { handle: streamHandle, size: 1024 * 1024 });
+      const data = String(part?.data ?? "");
+      if (data) {
+        const chunk = part?.base64Encoded ? Buffer.from(data, "base64") : Buffer.from(data, "utf8");
+        if (chunk.length) await output.write(chunk);
+      }
+      if (part?.eof) break;
+    }
+    await output.close();
+    output = undefined;
+    await session.send("IO.close", { handle: streamHandle }).catch(() => undefined);
+    streamHandle = "";
+    const stat = await fs.stat(stagedPath);
+    if (!stat.size) throw new Error("CDP resource download is empty.");
+    if (likelyPdfDownloadUrl(url)) {
+      const file = await fs.open(stagedPath, "r");
+      try {
+        const header = Buffer.alloc(5);
+        const read = await file.read(header, 0, 5, 0);
+        if (read.bytesRead < 5 || header.toString("ascii") !== "%PDF-") throw new Error("CDP resource is not a PDF file.");
+      } finally { await file.close().catch(() => undefined); }
+    }
+    return { kind: "browser-file", stagedPath, stagingDir, filename, url };
+  } catch (error) {
+    await output?.close?.().catch(() => undefined);
+    if (session && streamHandle) await session.send("IO.close", { handle: streamHandle }).catch(() => undefined);
+    await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  } finally {
+    await session?.detach?.().catch(() => undefined);
+  }
+};
+
+const createCdpDownloadSink = async (url: string, timeoutMs: number): Promise<any> => {
+  if (typeof context?.newCDPSession !== "function") throw new Error("目前瀏覽器不支援 CDP 下載接管。");
+  const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), "automation-studio-chrome-download-"));
+  const session = await context.newCDPSession(page);
+  let behaviorCommand = "";
+  try {
+    try {
+      await session.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: stagingDir });
+      behaviorCommand = "Page.setDownloadBehavior";
+    } catch {
+      await session.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: stagingDir, eventsEnabled: true });
+      behaviorCommand = "Browser.setDownloadBehavior";
+    }
+  } catch (error) {
+    await session.detach().catch(() => undefined);
+    await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+  const capturePromise = waitForCompletedBrowserFile(stagingDir, url, timeoutMs);
+  const close = async (): Promise<void> => {
+    try {
+      if (behaviorCommand === "Page.setDownloadBehavior") await session.send("Page.setDownloadBehavior", { behavior: "default" }).catch(() => undefined);
+      else if (behaviorCommand === "Browser.setDownloadBehavior") await session.send("Browser.setDownloadBehavior", { behavior: "default", eventsEnabled: false }).catch(() => undefined);
+    } finally { await session.detach().catch(() => undefined); }
+  };
+  return { stagingDir, capturePromise, close };
+};
+
+const runSpawnedCommand = async (command: string, args: string[], timeoutMs: number): Promise<void> => {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`下載命令逾時（${timeoutMs} ms）。`)); }, timeoutMs);
+    child.stderr?.on("data", (chunk) => { if (stderr.length < 8192) stderr += String(chunk); });
+    child.once("error", (error) => { clearTimeout(timer); reject(error); });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `${command} 結束代碼 ${code}`));
+    });
+  });
+};
+const downloadWithWindowsNative = async (url: string, filePath: string, headers: Record<string, string> = {}): Promise<boolean> => {
+  if (process.platform !== "win32") return false;
+  const args = ["--location", "--fail", "--silent", "--show-error", "--connect-timeout", "20", "--max-time", "90", "--output", filePath];
+  for (const [name, value] of Object.entries(headers)) {
+    if (name && value && !/[\r\n]/.test(name + value)) args.push("--header", `${name}: ${value}`);
+  }
+  args.push(url);
+  const systemRoot = process.env.SystemRoot || "C:\Windows";
+  for (const command of [path.join(systemRoot, "System32", "curl.exe"), "curl.exe"]) {
+    try {
+      await runSpawnedCommand(command, args, 100000);
+      const stat = await fs.stat(filePath);
+      if (stat.size) return true;
+    } catch { await fs.rm(filePath, { force: true }).catch(() => undefined); }
+  }
+  return false;
+};
+
+const downloadFrom = async (step: any): Promise<string> => {
+  const timeout = workflow.browser.downloadTimeoutMs;
+  const mode = step.downloadMode || "auto";
+  let capture: any | undefined;
+  if (mode !== "click") {
+    try { capture = await directDownloadFrom(step); }
+    catch (error) {
+      if (mode === "direct") throw error;
+      if (isCertificateTrustError(error)) console.warn("[下載防護] 直接下載遇到 TLS 憑證信任問題，已自動改用瀏覽器下載。", error instanceof Error ? error.message : error);
+      else console.warn("[下載防護] 直接下載未成功，已自動改用瀏覽器下載。", error instanceof Error ? error.message : error);
+    }
+  }
+  if (!capture && mode === "auto") {
+    try {
+      capture = await browserNavigationFrom(step);
+      if (capture) console.warn("[下載防護] 已改由 Chrome 網路層直接取得檔案，不依賴 Node TLS 或點擊下載事件。");
+    } catch (error) {
+      console.warn("[下載防護] Chrome 網路層直接取得檔案未成功，繼續使用原瀏覽器點擊流程。", error instanceof Error ? error.message : error);
+    }
+  }
+  if (!capture) {
+    const locator = await locate(step);
+    const sourceUrl = await locator.evaluate((element: Element) => {
+      const anchor = element instanceof HTMLAnchorElement ? element : element.closest("a");
+      return anchor?.href ?? "";
+    }).catch(() => "");
+
+    if (workflow.browser.downloadPdfInsteadOfPreview === true && sourceUrl && likelyPdfDownloadUrl(sourceUrl)) {
+      try {
+        capture = await cdpNetworkResourceDownload(sourceUrl, timeout, step);
+        if (capture) console.warn("[download guard] Chrome DevTools Network.loadNetworkResource saved the file without opening a PDF preview.");
+      } catch (error) {
+        console.warn("[download guard] Chrome DevTools resource download failed; falling back to the existing click/download path.", error instanceof Error ? error.message : error);
+      }
+    }
+
+    if (!capture) {
+      const recoveryHeaders = sourceUrl ? await snapshotDownloadRecoveryHeaders(sourceUrl) : {};
+      const browserFileSink = workflow.browser.downloadPdfInsteadOfPreview === true && sourceUrl && likelyPdfDownloadUrl(sourceUrl)
+        ? await createCdpDownloadSink(sourceUrl, timeout).catch(() => undefined)
+        : undefined;
+      const pdfFromContext = waitForPdfResponse(context, timeout, step);
+      const waits = context.pages().map((item: any) => captureFromPage(item, timeout, step));
+      waits.push(context.waitForEvent("page", { timeout }).then(async (popup: any) => ({ ...(await captureFromPage(popup, timeout, step)), popup })));
+      const capturePromise = Promise.any([...waits, pdfFromContext]);
+      await prepareInteraction(locator, step.timeoutMs ?? timeout);
+      if (sourceUrl) await preparePdfAnchorForDirectDownload(locator, sourceUrl);
+      await locator.click({ timeout: step.timeoutMs ?? timeout });
+      if (browserFileSink) {
+        const browserFileCapture = await browserFileSink.capturePromise.catch(() => undefined);
+        await browserFileSink.close().catch(() => undefined);
+        if (browserFileCapture) capture = browserFileCapture;
+        else await fs.rm(browserFileSink.stagingDir, { recursive: true, force: true }).catch(() => undefined);
+      }
+      if (!capture) capture = await capturePromise.catch(() => undefined);
+      if (capture?.kind === "download") {
+        const pdf = await Promise.race([pdfFromContext.catch(() => undefined), delay(750).then(() => undefined)]);
+        if (pdf) capture = pdf;
+      }
+      if (!capture) throw new Error(`未收到下載或 PDF 預覽回應；目前頁面：${context.pages().map((item: any) => item.url()).join(", ")}`);
+      if (capture.kind === "download") { capture.url = capture.url || sourceUrl; capture.recoveryHeaders = recoveryHeaders; }
+    }
+  }
+  const originalName = capture.kind === "download" ? safeFile(decodedDownloadNameFromUrl(capture.url || "") || capture.download.suggestedFilename?.() || `${step.id}.bin`) : capture.filename;
+  const filename = downloadFileName(originalName, step);
+  const extension = path.extname(filename);
+  const base = extension ? filename.slice(0, -extension.length) : filename;
+  let filePath = path.join(artifactDir, filename);
+  for (let index = 2; await fs.access(filePath).then(() => true).catch(() => false); index += 1) filePath = path.join(artifactDir, `${base} (${index})${extension}`);
+  try {
+    if (capture.kind === "browser-file") {
+      try { await fs.copyFile(capture.stagedPath, filePath); }
+      finally { await fs.rm(capture.stagingDir, { recursive: true, force: true }).catch(() => undefined); }
+    } else if (capture.kind === "download") {
+      const stagedPath = capture.stagedFilePromise ? await capture.stagedFilePromise.catch(() => undefined) : undefined;
+      if (stagedPath) {
+        try { await fs.copyFile(stagedPath, filePath); }
+        finally { await fs.rm(path.dirname(stagedPath), { recursive: true, force: true }).catch(() => undefined); }
+      } else try { await capture.download.saveAs(filePath); }
+      catch (saveError) {
+        try {
+          if (await saveDownloadStream(capture.download, filePath)) {
+            console.warn("[下載防護] saveAs 失敗，已從 Playwright 既有下載串流完成保存。");
+          } else throw saveError;
+        } catch {
+          const url = capture.url;
+          if (!url) throw saveError;
+          allowed(url);
+          if (await downloadWithWindowsNative(url, filePath, capture.recoveryHeaders || {}).catch(() => false)) {
+            console.warn("[下載防護] Playwright 下載物件已失效，已改用 Windows 原生 curl 完成下載。");
+          } else try {
+            const response = await context.request.get(url, { timeout: 60000 });
+            if (!response.ok()) throw new Error(`重新取得下載內容失敗：HTTP ${response.status()}。`, { cause: saveError });
+            const body = Buffer.from(await response.body());
+            if (!body.length) throw new Error("重新取得的下載內容為空白。", { cause: saveError });
+            await fs.writeFile(filePath, body);
+          } catch (recoveryError) {
+            const hint = isCertificateTrustError(recoveryError) ? "；Node 重新請求遇到 TLS 憑證信任問題" : "";
+            throw new Error(`瀏覽器已觸發下載，但 Playwright、Windows 原生下載與 URL 救援均無法保存${hint}。`, { cause: recoveryError });
+          }
+        }
+      }
+    } else await fs.writeFile(filePath, capture.body);
+  } finally {
+    if (capture.popup && !capture.popup.isClosed?.()) await capture.popup.close().catch(() => undefined);
+  }
+  if (!(await fs.stat(filePath)).size) throw new Error("下載檔案大小為 0 bytes");
+  return filePath;
+};
+
+const describePage = async (candidate: any): Promise<string> => {
+  const title = await candidate.title().catch(() => "");
+  return title ? `${title} (${candidate.url()})` : candidate.url();
+};
+const switchToTab = async (step: any): Promise<void> => {
+  const pages = context.pages().filter((candidate: any) => !candidate.isClosed());
+  const mode = step.tabTargetMode ?? "name";
+  const targetValue = expand(step.tabTarget ?? step.value ?? "").trim();
+  let target: any;
+  if (mode === "name") {
+    target = namedTabs.get(targetValue);
+    if (target?.isClosed?.()) target = undefined;
+  } else if (mode === "url") {
+    target = pages.find((candidate: any) => candidate.url().includes(targetValue));
+  } else if (mode === "title") {
+    for (const candidate of pages) {
+      const title = await candidate.title().catch(() => "");
+      if (title.includes(targetValue)) { target = candidate; break; }
+    }
+  } else if (mode === "index") {
+    target = pages[Math.max(1, Math.trunc(Number(step.tabIndex ?? step.tabTarget ?? 1))) - 1];
+  }
+  if (!target) {
+    const summary = await Promise.all(pages.map(async (candidate: any, index: number) => `${index + 1}. ${await describePage(candidate)}`));
+    throw new Error(`找不到指定分頁（模式：${mode}，條件：${targetValue || step.tabIndex || "未填"}）。目前分頁：${summary.join("；") || "無"}`);
+  }
+  page = target;
+  page.setDefaultTimeout(workflow.browser.defaultTimeoutMs);
+  await page.bringToFront().catch(() => undefined);
+};
+
+const scanVisibleListItems = async (step: any): Promise<any[]> => {
+  const limit = Math.min(100, Math.max(1, Math.trunc(Number(step.listLimit || 20))));
+  const scopes = step.autoFrameSearch ? orderedScopes(step) : [scopeOf(step)];
+  const results: any[] = []; const seen = new Set<string>();
+  for (const scope of scopes) {
+    for (const rule of step.selectors || []) {
+      let locator: any;
+      const value = expand(rule.value || "");
+      try {
+        if (rule.strategy === "role") locator = scope.getByRole(rule.role || "button", { name: value, exact: rule.exact });
+        else if (rule.strategy === "label") locator = scope.getByLabel(value, { exact: rule.exact });
+        else if (rule.strategy === "placeholder") locator = scope.getByPlaceholder(value, { exact: rule.exact });
+        else if (rule.strategy === "text") locator = scope.getByText(value, { exact: rule.exact });
+        else if (rule.strategy === "testId") locator = scope.getByTestId(value);
+        else if (rule.strategy === "name") locator = scope.locator(`[name=${JSON.stringify(value)}]`);
+        else if (rule.strategy === "xpath") locator = scope.locator(`xpath=${value}`);
+        else locator = scope.locator(value);
+        const count = Math.min(await locator.count().catch(() => 0), limit * 3);
+        for (let i=0; i<count && results.length<limit; i++) {
+          const item = locator.nth(i); if (!await item.isVisible().catch(() => false)) continue;
+          const data = await item.evaluate((element: Element) => {
+            const html = element as HTMLElement; const anchor = element instanceof HTMLAnchorElement ? element : element.closest("a");
+            const dataset = Object.fromEntries(Object.entries(html.dataset || {}).filter(([key,val]) => val && /id|key|item|message|conversation|mail/i.test(key)).sort(([a],[b]) => a.localeCompare(b)));
+            return { text:String(html.innerText || element.textContent || "").replace(/\s+/g," ").trim(), id:html.id||"", role:html.getAttribute("role")||"", aria:html.getAttribute("aria-label")||"", title:html.getAttribute("title")||"", href:anchor?.getAttribute("href")||"", dataset };
+          }).catch(() => ({ text:"", id:"", role:"", aria:"", title:"", href:"", dataset:{} }));
+          if (!data.text) continue; const fingerprint = JSON.stringify(data); if (seen.has(fingerprint)) continue; seen.add(fingerprint);
+          results.push({ locator:item, text:data.text, fingerprint });
+        }
+      } catch {}
+      if (results.length >= limit) return results;
+    }
+  }
+  return results;
+};
+
+const captureListSnapshot = async (step: any): Promise<void> => {
+  const outputName = String(step.outputVariable || "").trim(); if (!outputName) throw new Error("擷取清單快照尚未設定輸出變數");
+  const items = await scanVisibleListItems(step); if (!items.length) throw new Error("擷取清單快照時找不到可見清單項目");
+  variables[outputName] = JSON.stringify(items.map((item:any) => ({ fingerprint:item.fingerprint, text:item.text })));
+};
+
+const makePeriodicRefresher = (step: any, deadline: number) => {
+  let seconds = Number(step.refreshIntervalSeconds ?? 10);
+  if (step.periodicRefresh === true && (!Number.isInteger(seconds) || seconds < 5 || seconds > 600)) {
+    throw new Error("定期重新整理間隔必須為 5～600 秒的整數");
+  }
+  const interval = step.periodicRefresh === true ? seconds * 1000 : 0;
+  let next = interval ? Date.now() + interval : Number.POSITIVE_INFINITY;
+  return async (): Promise<void> => {
+    if (!interval || Date.now() < next || Date.now() >= deadline) return;
+    try {
+      await page.reload({ waitUntil: "domcontentloaded", timeout: Math.min(15000, Math.max(1, deadline - Date.now())) });
+    } finally { next = Date.now() + interval; }
+  };
+};
+
+const waitForNewListItem = async (step: any): Promise<void> => {
+  const baselineName = String(step.sourceVariable || "").trim(); if (!baselineName) throw new Error("等待新資料尚未設定基準變數");
+  const raw = String(variables[baselineName] ?? params[baselineName] ?? "").trim(); if (!raw) throw new Error(`基準變數 {{${baselineName}}} 為空白`);
+  let rows:any[]; try { rows = JSON.parse(raw); if (!Array.isArray(rows)) throw new Error(); } catch { throw new Error("基準變數不是有效的清單快照"); }
+  const fps = new Set(rows.map((r:any)=>String(r?.fingerprint||"")).filter(Boolean)); const texts = new Set(rows.map((r:any)=>String(r?.text||"").replace(/\s+/g," ").trim()).filter(Boolean));
+  const regex = String(step.regexPattern || "").trim() ? new RegExp(String(step.regexPattern), String(step.regexFlags || "i")) : undefined;
+  const deadline = Date.now()+Number(step.timeoutMs || 180000); let last="";
+  const refreshIfDue = makePeriodicRefresher(step, deadline);
+  while (Date.now() <= deadline) {
+    await refreshIfDue();
+    const items = await scanVisibleListItems(step).catch(()=>[]); last = items.slice(0,5).map((x:any)=>x.text).join(" | ");
+    for (const item of items) {
+      const text=String(item.text||"").replace(/\s+/g," ").trim(); if (fps.has(item.fingerprint) || texts.has(text)) continue;
+      if (regex) { regex.lastIndex=0; if (!regex.test(text)) continue; }
+      if (String(step.outputVariable||"").trim()) variables[String(step.outputVariable).trim()] = text;
+      if (step.clickOnMatch) { await item.locator.scrollIntoViewIfNeeded().catch(()=>undefined); await item.locator.click({ timeout:Math.min(Number(step.timeoutMs||30000),30000) }); }
+      return;
+    }
+    await page.waitForTimeout(Math.min(750, Math.max(1, deadline - Date.now())));
+  }
+  throw new Error(`等待基準集合以外的新資料逾時。${last}`);
+};
+
+const waitForNewFirst = async (step: any): Promise<void> => {
+  const baselineName = String(step.sourceVariable || "").trim();
+  if (!baselineName) throw new Error("等待第一筆新資料尚未設定基準變數");
+  const baseline = String(variables[baselineName] ?? params[baselineName] ?? "").replace(/\s+/g, " ").trim();
+  if (!baseline) throw new Error(`基準變數 {{${baselineName}}} 為空白`);
+  const regex = String(step.regexPattern || "").trim() ? new RegExp(String(step.regexPattern), String(step.regexFlags || "i")) : undefined;
+  const deadline = Date.now() + Number(step.timeoutMs || 120000);
+  const refreshIfDue = makePeriodicRefresher(step, deadline);
+  let lastText = "";
+  while (Date.now() <= deadline) {
+    await refreshIfDue();
+    try {
+      const locator = await locate({ ...step, matchMode: "first" });
+      const text = String((await locator.innerText().catch(() => "")) || (await locator.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+      if (text) {
+        lastText = text;
+        if (text !== baseline && (!regex || regex.test(text))) {
+          if (String(step.outputVariable || "").trim()) variables[String(step.outputVariable).trim()] = text;
+          return;
+        }
+      }
+    } catch {}
+    await page.waitForTimeout(Math.min(500, Math.max(1, deadline - Date.now())));
+  }
+  throw new Error(`等待第一筆新資料逾時。最後讀到：${lastText || "(無)"}`);
+};
+
+const writeClipboard = async (text: string): Promise<void> => {
+  const origin = (() => { try { return new URL(page.url()).origin; } catch { return undefined; } })();
+  if (origin && /^https?:/i.test(origin)) await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin }).catch(() => undefined);
+  const ok = await page.evaluate(async (value: string) => {
+    try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return true; } } catch {}
+    const area = document.createElement("textarea"); area.value = value; area.style.position = "fixed"; area.style.opacity = "0";
+    document.body.appendChild(area); area.select(); const copied = document.execCommand("copy"); area.remove(); return copied;
+  }, text);
+  if (!ok) throw new Error("無法寫入系統剪貼簿");
+};
+
+const executeStep = async (step: any): Promise<void> => {
+  await waitFor(step.waitBefore, step.autoFrameSearch === true);
+  if (step.kind === "manual") await manualAction(step);
+  else if (step.kind === "newTab") {
+    const url = expand(step.url || step.value || "about:blank");
+    if (/^https?:/i.test(url)) allowed(url);
+    page = await context.newPage();
+    page.setDefaultTimeout(workflow.browser.defaultTimeoutMs);
+    if (url && url !== "about:blank") {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: step.timeoutMs ?? workflow.browser.defaultTimeoutMs });
+      if (/^https?:/i.test(page.url())) allowed(page.url());
+    }
+    if (String(step.tabName || "").trim()) namedTabs.set(String(step.tabName).trim(), page);
+    await page.bringToFront().catch(() => undefined);
+  }
+  else if (step.kind === "switchTab") await switchToTab(step);
+  else if (step.kind === "navigate") {
+    const url = expand(step.url || step.value || workflow.targetUrl);
+    allowed(url);
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: step.timeoutMs ?? workflow.browser.defaultTimeoutMs });
+    if (/^https?:/i.test(page.url())) allowed(page.url());
+    if (safePlayback) {
+      await page.waitForLoadState("load", { timeout: Math.min(step.timeoutMs ?? workflow.browser.defaultTimeoutMs, 10000) }).catch(() => undefined);
+      await page.waitForTimeout(350);
+    }
+  } else if (step.kind === "wait") await waitFor(step.waitAfter ?? { kind: "timeout", timeoutMs: Number(step.value || 1000) }, step.autoFrameSearch === true);
+  else if (step.kind === "waitNewFirst") await waitForNewFirst(step);
+  else if (step.kind === "captureListSnapshot") await captureListSnapshot(step);
+  else if (step.kind === "waitNewListItem") await waitForNewListItem(step);
+  else if (step.kind === "assert") await verify(step);
+  else if (step.kind === "extractPattern") {
+    const sourceName = String(step.sourceVariable || "").trim();
+    const outputName = String(step.outputVariable || "").trim();
+    if (!sourceName || !outputName) throw new Error("擷取樣式需要來源變數與輸出變數");
+    const source = String(variables[sourceName] ?? params[sourceName] ?? "");
+    const re = new RegExp(step.regexPattern || "\\b\\d{6}\\b", step.regexFlags || "");
+    const match = re.exec(source);
+    if (!match) throw new Error(`找不到符合樣式的文字：${step.regexPattern}`);
+    const group = Math.max(0, Math.trunc(Number(step.regexGroup ?? 0)));
+    if (match[group] === undefined) throw new Error(`正規表示式沒有第 ${group} 群組`);
+    variables[outputName] = match[group];
+  } else if (step.kind === "clipboard") await writeClipboard(expand(step.value || ""));
+  else if (step.kind === "download") await event("download", { stepId: step.id, file: await downloadFrom(step) });
+  else if (step.kind === "savePagePdf") {
+    if (typeof page.pdf !== "function") throw new Error("保存頁面 PDF 需要 Chromium／Chrome 瀏覽器分頁；目前連線不支援原生列印 PDF。");
+    const fileName = pagePdfFilename(expand(step.pdfFileName || ""), String(step.name || step.id), step.pdfUseLocalTime !== false);
+    const filePath = await nextPdfPath(fileName);
+    const margin = (value: unknown) => `${Math.min(50, Math.max(0, Number.isFinite(Number(value)) ? Number(value) : 10))}mm`;
+    const scale = (value: unknown) => Math.min(2, Math.max(0.1, Number.isFinite(Number(value)) ? Number(value) : 1));
+    let viewportPrintStyle: any;
+    if (step.pdfFullPage === false) {
+      const viewportHeight = await page.evaluate(() => Math.max(1, window.innerHeight));
+      viewportPrintStyle = await page.addStyleTag({ content: `@media print { html, body { height: ${viewportHeight}px !important; max-height: ${viewportHeight}px !important; overflow: hidden !important; } }` });
+    }
+    try {
+      await page.pdf({
+        path: filePath,
+        format: step.pdfPageSize === "Letter" ? "Letter" : "A4",
+        landscape: step.pdfOrientation === "landscape",
+        printBackground: step.pdfPrintBackground === true,
+        displayHeaderFooter: step.pdfDisplayHeaderFooter === true,
+        headerTemplate: expand(step.pdfHeaderTemplate || "") || undefined,
+        footerTemplate: expand(step.pdfFooterTemplate || "") || undefined,
+        scale: scale(step.pdfScale),
+        margin: { top: margin(step.pdfMarginTopMm), right: margin(step.pdfMarginRightMm), bottom: margin(step.pdfMarginBottomMm), left: margin(step.pdfMarginLeftMm) }
+      });
+    } finally {
+      if (viewportPrintStyle) await viewportPrintStyle.evaluate((element: Element) => element.remove()).catch(() => undefined);
+    }
+    await event("download", { stepId: step.id, file: filePath, source: "page-pdf" });
+  }
+  else if (step.kind === "screenshot") await page.screenshot({ path: path.join(artifactDir, expand(step.value || `${step.id}.png`)), fullPage: true });
+  else if (step.kind === "script") await page.evaluate((source: string) => (0, eval)(source), expand(step.script ?? step.value));
+  else if (step.kind === "condition") await executeSteps((await conditionMatches(step.condition)) ? step.thenSteps ?? [] : step.elseSteps ?? []);
+  else if (step.kind === "loop") {
+    const values = step.loopParameter ? String(params[step.loopParameter] ?? "").split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean) : step.loopValues ?? [];
+    for (const value of values) {
+      variables[step.loopVariable || "item"] = value;
+      await executeSteps(step.steps ?? []);
+    }
+  } else if (step.componentPath || step.selectors?.some((item: any) => item.strategy === "component")) await componentAction(step);
+  else {
+    const locator = await locate(step);
+    const timeout = step.timeoutMs ?? workflow.browser.defaultTimeoutMs;
+    if (step.kind === "extractText") {
+      const outputName = String(step.outputVariable || "").trim();
+      if (!outputName) throw new Error("擷取文字需要輸出變數");
+      const mode = step.extractMode || "text";
+      let value: string;
+      if (mode === "html") value = await locator.innerHTML();
+      else if (mode === "attribute") {
+        const attr = String(step.extractAttribute || "").trim();
+        if (!attr) throw new Error("擷取屬性模式需要屬性名稱");
+        value = String(await locator.getAttribute(attr) ?? "");
+      } else value = await locator.innerText();
+      variables[outputName] = value.trim();
+    } else {
+    if (step.kind !== "upload") await prepareInteraction(locator, timeout);
+    if (step.kind === "click") await locator.click({ timeout });
+    else if (step.kind === "dblclick") await locator.dblclick({ timeout });
+    else if (step.kind === "fill") await fillLocator(locator, expand(step.value), timeout);
+    else if (step.kind === "select") await locator.selectOption(expand(step.value));
+    else if (step.kind === "upload") {
+      const files = expand(step.value).split(/\r?\n/).map((file: string) => file.trim()).filter(Boolean);
+      if (!files.length) throw new Error("上傳步驟缺少檔案路徑，請設定完整本機路徑（一行一個）。");
+      await locator.setInputFiles(files.map((file: string) => path.resolve(file)));
+    }
+    else if (step.kind === "press") await locator.press(expand(step.value));
+    else if (step.kind === "hover") await locator.hover({ timeout });
+    else if (step.kind === "check") await locator.check({ timeout });
+    else if (step.kind === "uncheck") await locator.uncheck({ timeout });
+    else throw new Error(`尚未支援的步驟：${step.kind}`);
+    }
+  }
+  if (!pageClosed()) {
+    if (/^https?:/i.test(page.url())) allowed(page.url());
+    if (step.kind !== "wait") await waitFor(step.waitAfter, step.autoFrameSearch === true);
+    if (step.kind !== "assert") await verify(step);
+  } else if (step.kind !== "download") throw new Error("執行步驟後目標頁面已關閉，無法繼續驗證。");
+};
+async function executeSteps(steps: any[]): Promise<void> {
+  for (const step of steps.filter((item) => item.enabled)) {
+    const retries = step.retryCount ?? workflow.settings.maxRetries ?? 0;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= retries + 1; attempt += 1) {
+      try {
+        await event("step_started", { stepId: step.id, name: step.name, kind: step.kind, attempt });
+        await executeStep(step);
+        if (await isVerificationPage()) throw new Error("自動化步驟觸發網站安全驗證，已停止重播且不會自動重試。");
+        await event("step_completed", { stepId: step.id, url: pageClosed() ? "[page closed after download]" : page.url() });
+        await delay(humanizedPlayback ? stepDelayMs + randomBetween(150, 850) : safePlayback ? stepDelayMs : 800);
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+        await event("step_failed", { stepId: step.id, attempt, message: error instanceof Error ? error.message : String(error) });
+        const protectedStop = /安全驗證|機器人驗證|HTTP (403|429)|網站負載/i.test(error instanceof Error ? error.message : String(error));
+        if (attempt <= retries && !protectedStop && step.kind !== "manual" && !pageClosed()) await delay(5000);
+        else break;
+      }
+    }
+    if (lastError) throw lastError;
+  }
+}
+
+try {
+  await event("run_started", { project: workflow.id, version: workflow.version });
+  await executeSteps(workflow.steps);
+  await event("run_completed", { url: page.url() });
+  console.log(`流程完成。執行證據：${artifactDir}`);
+} catch (error) {
+  await page.screenshot({ path: path.join(artifactDir, "failure.png"), fullPage: true }).catch(() => undefined);
+  await fs.writeFile(path.join(artifactDir, "page.html"), await page.content().catch(() => ""), "utf8");
+  await event("run_failed", { message: error instanceof Error ? error.message : String(error) });
+  throw error;
+} finally {
+  if (cdpMode) {
+    // Disconnect from the user-owned Chrome without closing its default context/tabs.
+    await browser?.close().catch(() => undefined);
+  } else {
+    await context.close().catch(() => undefined);
+    await browser?.close().catch(() => undefined);
+  }
+}

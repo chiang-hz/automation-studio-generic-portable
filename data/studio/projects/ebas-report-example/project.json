@@ -1,0 +1,190 @@
+{
+  "id": "ebas-report-example",
+  "name": "EBAS 報表下載範例",
+  "description": "將既有 EBAS 經驗整理成可編輯範例。需先在網站與工作站頁面完成人工登入。",
+  "releaseNotes": "將既有 EBAS 經驗整理成可編輯範例。需先在網站與工作站頁面完成人工登入。",
+  "version": "1.0.0",
+  "status": "draft",
+  "targetUrl": "https://ebasnew.ebas.gov.tw/SSO/ToLink/0/1103",
+  "allowedDomains": [
+    "ebasnew.ebas.gov.tw",
+    "sso.ebas.gov.tw"
+  ],
+  "adapter": "ebas",
+  "browser": {
+    "connectionMode": "managed",
+    "channel": "bundled",
+    "headless": false,
+    "slowMoMs": 100,
+    "defaultTimeoutMs": 30000,
+    "downloadTimeoutMs": 60000,
+    "viewportWidth": 1440,
+    "viewportHeight": 900,
+    "stealth": false,
+    "reuseProfile": true,
+    "downloadPdfInsteadOfPreview": false,
+    "cdpEndpoint": "http://127.0.0.1:9222",
+    "cdpAutoLaunch": true,
+    "cdpInitialPageMode": "first",
+    "cdpInitialPageTarget": "",
+    "cdpInitialPageIndex": 1
+  },
+  "settings": {
+    "maxRetries": 1,
+    "safePlayback": true,
+    "humanizedPlayback": false,
+    "minStepDelayMs": 2000,
+    "screenshotMode": "failure",
+    "saveHtmlOnFailure": true,
+    "captureConsole": true,
+    "captureNetwork": true,
+    "defaultConcurrency": 1
+  },
+  "parameters": [
+    {
+      "id": "p-year",
+      "name": "year",
+      "label": "年度",
+      "type": "text",
+      "required": true,
+      "defaultValue": "115",
+      "sensitive": false,
+      "options": []
+    },
+    {
+      "id": "p-stage",
+      "name": "stage",
+      "label": "階段",
+      "type": "text",
+      "required": true,
+      "defaultValue": "院編決算",
+      "sensitive": false,
+      "options": []
+    },
+    {
+      "id": "p-format",
+      "name": "format",
+      "label": "輸出格式",
+      "type": "select",
+      "required": true,
+      "defaultValue": "excel",
+      "options": [
+        "excel",
+        "pdf",
+        "xml",
+        "ods"
+      ],
+      "sensitive": false
+    },
+    {
+      "id": "p-level",
+      "name": "printLevel",
+      "label": "會計科目列印層級",
+      "type": "select",
+      "required": false,
+      "defaultValue": "5",
+      "options": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "sensitive": false
+    }
+  ],
+  "steps": [
+    {
+      "id": "ebas-open",
+      "name": "開啟 EBAS 入口",
+      "kind": "navigate",
+      "enabled": true,
+      "url": "https://ebasnew.ebas.gov.tw/SSO/ToLink/0/1103",
+      "waitAfter": {
+        "kind": "timeout",
+        "timeoutMs": 1500
+      }
+    },
+    {
+      "id": "ebas-year",
+      "name": "設定年度",
+      "kind": "fill",
+      "enabled": true,
+      "adapter": "ebas",
+      "componentPath": "q.q_year",
+      "value": "{{year}}",
+      "frame": {
+        "urlIncludes": "/SFUND/"
+      },
+      "verification": {
+        "kind": "value",
+        "expected": "{{year}}",
+        "selector": [
+          {
+            "strategy": "css",
+            "value": "#q_year"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ebas-level",
+      "name": "設定會計科目列印層級",
+      "kind": "select",
+      "enabled": true,
+      "adapter": "ebas",
+      "componentPath": "mst1.code_level",
+      "value": "{{printLevel}}",
+      "frame": {
+        "urlIncludes": "/SFUND/"
+      }
+    },
+    {
+      "id": "ebas-format",
+      "name": "選擇 Excel 輸出",
+      "kind": "check",
+      "enabled": true,
+      "adapter": "ksi",
+      "componentPath": "mst1.excel",
+      "value": "excel",
+      "frame": {
+        "urlIncludes": "/SFUND/"
+      }
+    },
+    {
+      "id": "ebas-ready",
+      "name": "等待 EBAS 狀態同步",
+      "kind": "wait",
+      "enabled": true,
+      "value": "1200"
+    },
+    {
+      "id": "ebas-download",
+      "name": "列印並等待下載",
+      "kind": "download",
+      "enabled": true,
+      "frame": {
+        "urlIncludes": "/SFUND/"
+      },
+      "selectors": [
+        {
+          "strategy": "text",
+          "value": "列印",
+          "exact": true
+        },
+        {
+          "strategy": "css",
+          "value": "button[onclick*='executePrint']"
+        }
+      ],
+      "timeoutMs": 60000
+    }
+  ],
+  "tags": [
+    "範例",
+    "EBAS",
+    "ExtJS"
+  ],
+  "createdAt": "2026-10-20T07:45:23.925Z",
+  "updatedAt": "2026-10-20T07:45:23.925Z"
+}
