@@ -462,13 +462,8 @@ export function createId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Imports are independent copies: never grow or trust the source project's ID. */
 export function createImportedProject(input: Partial<WorkflowProject> = {}): WorkflowProject {
-  return createDefaultProject({
-    ...input,
-    id: `workflow-import-${randomUUID()}`,
-    name: `${input.name ?? "匯入專案"}（匯入）`
-  });
+  return createDefaultProject({ ...input, id: `workflow-import-${randomUUID()}`, name: `${input.name ?? "匯入專案"}（匯入）` });
 }
 
 export function createDefaultProject(input: Partial<WorkflowProject> = {}): WorkflowProject {
@@ -495,6 +490,9 @@ export function createDefaultProject(input: Partial<WorkflowProject> = {}): Work
       viewportWidth: 1440,
       viewportHeight: 900,
       reuseProfile: true,
+      authStateEnabled: false,
+      authVerifyUrl: "",
+      authSuccessSelector: "",
       downloadPdfInsteadOfPreview: false,
       cdpEndpoint: "http://127.0.0.1:9222",
       cdpAutoLaunch: true,
@@ -585,6 +583,9 @@ function normalizeBrowserSettings(browser: WorkflowProject["browser"] | undefine
     viewportHeight: Number.isFinite(Number(raw.viewportHeight)) ? Math.max(240, Number(raw.viewportHeight)) : 900,
     stealth: raw.stealth === true,
     reuseProfile: raw.reuseProfile !== false,
+    authStateEnabled: raw.authStateEnabled === true,
+    authVerifyUrl: String(raw.authVerifyUrl || "").trim(),
+    authSuccessSelector: String(raw.authSuccessSelector || "").trim(),
     downloadPdfInsteadOfPreview: raw.downloadPdfInsteadOfPreview === true,
     cdpEndpoint: String(raw.cdpEndpoint || "http://127.0.0.1:9222").trim(),
     cdpAutoLaunch: raw.cdpAutoLaunch !== false,
@@ -717,9 +718,7 @@ function safeId(value: string): string {
   const id = String(value).trim();
   if (!id) throw new Error("識別碼不可為空白。");
   if (id.length > 120) throw new Error(`識別碼長度不可超過 120 個字元（目前 ${id.length} 個字元）。`);
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) {
-    throw new Error("識別碼必須以英數字開頭，且只能包含英數字、句點、底線與連字號。");
-  }
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) throw new Error("識別碼必須以英數字開頭，且只能包含英數字、句點、底線與連字號。");
   return id;
 }
 

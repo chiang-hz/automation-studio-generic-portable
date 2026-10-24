@@ -1078,15 +1078,16 @@ function handleDesignerShortcut(event) {
 function addStep(kind) {
   if (!state.project) return;
   const id = `step-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  const names = { navigate: "開啟網址", newTab: "開新分頁", switchTab: "切換至指定分頁", manual: "人工操作", click: "點擊元件", dblclick: "雙擊元件", extractText: "擷取文字", extractPattern: "擷取樣式", clipboard: "複製至剪貼簿", fill: "填入欄位", select: "選擇選項", upload: "上傳檔案", press: "鍵盤按鍵", hover: "移至元件", check: "勾選項目", wait: "等待頁面", waitNewFirst: "等待第一筆新資料", captureListSnapshot: "擷取清單快照", waitNewListItem: "等待清單新資料", assert: "驗證結果", download: "下載檔案", savePagePdf: "保存頁面 PDF", condition: "條件分支", loop: "迴圈處理" };
+  const names = { navigate: "開啟網址", newTab: "開新分頁", switchTab: "切換至指定分頁", manual: "人工操作", click: "點擊元件", dblclick: "雙擊元件", extractWebData: "擷取網頁資料", saveDocument: "保存彙整文件", extractText: "擷取文字", extractPattern: "擷取樣式", clipboard: "複製至剪貼簿", fill: "填入欄位", select: "選擇選項", upload: "上傳檔案", press: "鍵盤按鍵", hover: "移至元件", check: "勾選項目", wait: "等待頁面", waitNewFirst: "等待第一筆新資料", captureListSnapshot: "擷取清單快照", waitNewListItem: "等待清單新資料", assert: "驗證結果", download: "下載檔案", savePagePdf: "保存頁面 PDF", condition: "條件分支", loop: "迴圈處理" };
   const step = {
     id, name: names[kind] ?? "新步驟", kind, enabled: true, adapter: "generic", retryCount: 1,
-    selectors: ["navigate", "newTab", "switchTab", "manual", "wait", "condition", "loop", "extractPattern", "clipboard", "savePagePdf"].includes(kind) ? [] : [{ strategy: "role", role: kind === "fill" ? "textbox" : "button", value: "" }]
+    selectors: ["navigate", "newTab", "switchTab", "manual", "wait", "condition", "loop", "extractPattern", "clipboard", "savePagePdf", "extractWebData", "saveDocument"].includes(kind) ? [] : [{ strategy: "role", role: kind === "fill" ? "textbox" : "button", value: "" }]
   };
   if (kind === "navigate") step.url = state.project.targetUrl;
   if (kind === "newTab") { step.url = "https://"; step.tabName = "new-tab"; }
   if (kind === "switchTab") { step.tabTargetMode = "name"; step.tabTarget = "new-tab"; }
   if (kind === "manual") { step.value = "請在開啟的瀏覽器中完成人工操作。"; step.manualCompletionMode = "button"; step.retryCount = 0; }
+  if (["extractWebData", "saveDocument"].includes(kind)) initializeDataStep(step);
   if (kind === "extractText") { step.outputVariable = "mailBody"; step.extractMode = "text"; }
   if (kind === "extractPattern") { step.sourceVariable = "mailBody"; step.regexPattern = "\\b\\d{6}\\b"; step.regexFlags = ""; step.regexGroup = 0; step.outputVariable = "verificationCode"; }
   if (kind === "clipboard") { step.value = "{{mailBody}}"; }
@@ -1119,12 +1120,12 @@ function renderStepProperties() {
     <label class="field"><span>步驟名稱</span><input id="stepName" value="${escapeHtml(step.name)}" /></label>
     <div class="inline-grid">
       <label class="field"><span>動作</span><select id="stepKind">${stepOptions(step.kind)}</select></label>
-      ${step.kind === "savePagePdf" ? "" : `<label class="field"><span>Adapter</span><select id="stepAdapter">${adapterOptions(step.adapter ?? state.project.adapter)}</select></label>`}
+      ${["savePagePdf", "extractWebData", "saveDocument"].includes(step.kind) ? "" : `<label class="field"><span>Adapter</span><select id="stepAdapter">${adapterOptions(step.adapter ?? state.project.adapter)}</select></label>`}
     </div>
-    ${step.kind === "savePagePdf" ? "" : step.kind === "upload" ? `<label class="field"><span>上傳檔案完整路徑（一行一個）</span><textarea id="stepValue" placeholder="例如完整本機路徑">${escapeHtml(String(step.value ?? ""))}</textarea><small>${escapeHtml(step.description ?? "支援多檔，每行填入一個完整路徑；可使用參數。")}</small></label>` : step.kind === "switchTab" ? "" : `<label class="field"><span>${step.kind === "manual" ? "人工操作說明" : step.kind === "clipboard" ? "要複製的文字／變數" : "網址／輸入值"}</span><input id="stepValue" value="${escapeHtml(step.url ?? String(step.value ?? ""))}" placeholder="可使用 {{參數Key}}" /></label>`}
+    ${["savePagePdf", "extractWebData", "saveDocument"].includes(step.kind) ? "" : step.kind === "upload" ? `<label class="field"><span>上傳檔案完整路徑（一行一個）</span><textarea id="stepValue" placeholder="例如完整本機路徑">${escapeHtml(String(step.value ?? ""))}</textarea><small>${escapeHtml(step.description ?? "支援多檔，每行填入一個完整路徑；可使用參數。")}</small></label>` : step.kind === "switchTab" ? "" : `<label class="field"><span>${step.kind === "manual" ? "人工操作說明" : step.kind === "clipboard" ? "要複製的文字／變數" : "網址／輸入值"}</span><input id="stepValue" value="${escapeHtml(step.url ?? String(step.value ?? ""))}" placeholder="可使用 {{參數Key}}" /></label>`}
     ${kindSpecificFields(step)}
     ${["navigate","newTab"].includes(step.kind) ? navigateDomainStatus(step) : ""}
-    ${step.kind === "savePagePdf" ? "" : `${selectorMatchFields(step)}
+    ${["savePagePdf", "extractWebData", "saveDocument"].includes(step.kind) ? "" : `${selectorMatchFields(step)}
     <label class="field"><span>定位方式（依序備援）</span><textarea id="stepSelectors" spellcheck="false">${escapeHtml(JSONTape(step.selectors ?? []))}</textarea><small>JSON 陣列；role、label、name、text、css、xpath、component。</small></label>
     <label class="field"><span>元件物件路徑</span><input id="componentPath" value="${escapeHtml(step.componentPath ?? "")}" placeholder="例如 q.q_year 或 mst1.code_level" /></label>
     <div class="inline-grid">
@@ -1143,6 +1144,7 @@ function renderStepProperties() {
   $("#saveStepButton").addEventListener("click", saveStepProperties);
   $("#duplicateStepButton").addEventListener("click", () => duplicateStep());
   $("#deleteStepButton").addEventListener("click", deleteSelectedStep);
+  bindDataStepFields();
   $("#stepKind").addEventListener("change", changeSelectedStepKind);
   $("#addStepDomainButton")?.addEventListener("click", () => { const host = $("#addStepDomainButton")?.dataset.host; if (host) { addDomainValue(host); renderStepProperties(); } });
   $("#periodicRefresh")?.addEventListener("change", (event) => {
@@ -1247,6 +1249,7 @@ function changeSelectedStepKind(event) {
     step.value = previousKind === "navigate" ? "" : formValue;
     delete step.url;
   }
+  if (["extractWebData", "saveDocument"].includes(nextKind)) initializeDataStep(step);
   if (nextKind === "newTab") step.tabName ??= "new-tab";
   if (nextKind === "switchTab") { step.tabTargetMode ??= "name"; step.tabTarget ??= "new-tab"; }
   if (nextKind === "manual") {
@@ -1319,6 +1322,7 @@ function saveStepProperties() {
           ? { kind: "url", expected: step.manualExpected }
           : undefined;
     }
+    if (["extractWebData", "saveDocument"].includes(step.kind)) readDataStepFields(step);
     if (step.kind === "extractText") {
       step.outputVariable = $("#outputVariable")?.value.trim() || undefined;
       step.extractMode = $("#extractMode")?.value || "text";
@@ -1494,7 +1498,72 @@ function readPeriodicRefreshSettings(step) {
   step.refreshIntervalSeconds = seconds;
 }
 
+function initializeDataStep(step) {
+  step.dataCollection ??= "records";
+  step.selectors = [];
+  if (step.kind === "extractWebData") {
+    step.dataMode ??= "single"; step.dataFields ??= [{ name: "標題", selector: "h1", mode: "text", required: true }];
+    step.dataAppend ??= true; step.dataIncludeSource ??= true; step.dataLimit ??= 1000;
+  } else {
+    step.documentFormat ??= "docx"; step.documentTitle ??= "網頁資料彙整";
+    step.documentFileName ??= "網頁資料彙整"; step.documentUseLocalTime ??= true; step.documentLayout ??= "table";
+  }
+}
+function dataFieldRow(field = {}) {
+  return `<div class="data-capture-field kind-box"><div class="inline-grid"><label class="field"><span>欄位名稱</span><input class="data-field-name" value="${escapeHtml(field.name || "")}" placeholder="例如 標題"/></label><label class="field"><span>CSS 定位（清單內相對位置）</span><input class="data-field-selector" value="${escapeHtml(field.selector || "")}" placeholder="例如 h1、.title、a；留空讀取整個項目"/></label></div><div class="inline-grid"><label class="field"><span>擷取類型</span><select class="data-field-mode">${optionList([["text","文字"],["html","HTML"],["attribute","屬性"]],field.mode || "text")}</select></label><label class="field"><span>屬性名稱</span><input class="data-field-attribute" value="${escapeHtml(field.attribute || "")}" placeholder="例如 href、datetime"/></label></div><div class="action-row"><label class="checkbox-field"><input type="checkbox" class="data-field-required" ${field.required ? "checked" : ""}/><span>必填（找不到或空白時停止）</span></label><button type="button" class="button danger-subtle small" data-remove-data-field>移除此欄</button></div></div>`;
+}
+function webDataFields(step) {
+  const collection = `<label class="field"><span>資料集合名稱</span><input id="dataCollection" value="${escapeHtml(step.dataCollection || "records")}" placeholder="records"/><small>擷取與保存步驟使用相同名稱；每次完整執行從空集合開始。</small></label>`;
+  if (step.kind === "extractWebData") return `<div class="kind-box"><b>擷取網頁資料</b>${collection}<label class="field"><span>擷取模式</span><select id="dataMode">${optionList([["single","單頁欄位（產生一筆）"],["list","重複清單（每個項目一筆）"],["table","整張表格（自動讀取欄名與資料列）"]],step.dataMode || "single")}</select></label><label class="field" id="dataRowSelectorField"><span>清單項目／表格的 CSS 定位</span><input id="dataRowSelector" value="${escapeHtml(step.dataRowSelector || "")}" placeholder="清單：.result-item；表格：table#results"/><small>清單請定位每個重複項目；表格請定位 table。表格模式取第一張符合表格。</small></label><div id="dataFieldDefinitions"><p>欄位定位可參考錄製事件的 CSS；清單模式以每個項目為範圍。定位需唯一；非必填欄位缺少時存為空白。</p><div id="dataFields">${(step.dataFields || [{name:"標題",selector:"h1",mode:"text",required:true}]).map(dataFieldRow).join("")}</div><button id="addDataField" class="button secondary small" type="button">新增欄位</button></div><label class="field"><span>單次最多擷取筆數</span><input id="dataLimit" type="number" min="1" max="5000" value="${Number(step.dataLimit) || 1000}"/></label><label class="checkbox-field"><input id="dataAppend" type="checkbox" ${step.dataAppend !== false ? "checked" : ""}/><span>追加至既有集合（取消勾選會取代該集合）</span></label><label class="checkbox-field"><input id="dataIncludeSource" type="checkbox" ${step.dataIncludeSource !== false ? "checked" : ""}/><span>附上來源網址與擷取時間（_sourceUrl、_capturedAt）</span></label><div class="inline-grid"><label class="field"><span>Frame URL 包含（可留空）</span><input id="frameUrl" value="${escapeHtml(step.frame?.urlIncludes || "")}"/></label><label class="field"><span>逾時（ms）</span><input id="stepTimeout" type="number" value="${Number(step.timeoutMs) || 30000}"/></label></div><small>先用等待步驟確保內容載入。翻頁後再次擷取可累積資料；最多 50,000 筆，再以「保存彙整文件」輸出。</small></div>`;
+  return `<div class="kind-box"><b>保存彙整文件</b>${collection}<label class="field"><span>文件格式</span><select id="documentFormat">${optionList([["docx","Word（.docx）"],["json","JSON（.json）"],["xlsx","Excel（.xlsx）"]],step.documentFormat || "docx")}</select></label><label class="field"><span>文件標題</span><input id="documentTitle" value="${escapeHtml(step.documentTitle || "網頁資料彙整")}"/></label><label class="field"><span>檔名（可使用 {{參數}}）</span><input id="documentFileName" value="${escapeHtml(step.documentFileName || "網頁資料彙整")}"/></label><label class="checkbox-field"><input type="checkbox" id="documentUseLocalTime" ${step.documentUseLocalTime !== false ? "checked" : ""}/><span>檔名附加電腦本機時間；同名檔案自動編號</span></label><label class="field"><span>輸出欄位及順序（一行一欄，留空輸出全部）</span><textarea id="documentColumns" rows="4" placeholder="標題&#10;內容&#10;_sourceUrl">${escapeHtml((step.documentColumns || []).join("\n"))}</textarea></label><label class="field" id="documentLayoutField"><span>Word 呈現方式</span><select id="documentLayout">${optionList([["table","表格"],["paragraphs","逐筆段落"]],step.documentLayout || "table")}</select></label><label class="field" id="documentSheetNameField"><span>Excel 工作表名稱</span><input id="documentSheetName" value="${escapeHtml(step.documentSheetName || "資料彙整")}"/></label><small>保存至「系統設定 → 預設下載路徑」，並列入執行紀錄。Excel 使用文字儲存格，保留前導零及避免將網頁內容當成公式；JSON 輸出為物件陣列。</small></div>`;
+}
+function updateDataStepVisibility() {
+  const mode = $("#dataMode")?.value;
+  if ($("#dataRowSelectorField")) $("#dataRowSelectorField").style.display = mode === "single" ? "none" : "grid";
+  if ($("#dataFieldDefinitions")) $("#dataFieldDefinitions").style.display = mode === "table" ? "none" : "block";
+  const format = $("#documentFormat")?.value;
+  if ($("#documentLayoutField")) $("#documentLayoutField").style.display = format === "docx" ? "grid" : "none";
+  if ($("#documentSheetNameField")) $("#documentSheetNameField").style.display = format === "xlsx" ? "grid" : "none";
+  $$(".data-capture-field").forEach(row => { row.querySelector(".data-field-attribute").disabled = row.querySelector(".data-field-mode").value !== "attribute"; });
+}
+function bindDataStepFields() {
+  $("#dataMode")?.addEventListener("change", updateDataStepVisibility);
+  $("#documentFormat")?.addEventListener("change", updateDataStepVisibility);
+  $("#dataFields")?.addEventListener("change", updateDataStepVisibility);
+  $("#dataFields")?.addEventListener("click", event => {
+    const button = event.target.closest("[data-remove-data-field]");
+    if (button) { button.closest(".data-capture-field").remove(); markStepPropertiesPending(); }
+  });
+  $("#addDataField")?.addEventListener("click", () => {
+    $("#dataFields").insertAdjacentHTML("beforeend", dataFieldRow());
+    updateDataStepVisibility(); markStepPropertiesPending();
+  });
+  updateDataStepVisibility();
+}
+function readDataStepFields(step) {
+  step.dataCollection = $("#dataCollection").value.trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(step.dataCollection) || ["__proto__","constructor","prototype"].includes(step.dataCollection)) throw new Error("資料集合名稱須以英文字母或底線開頭，最多 80 個英數字或底線。");
+  if (step.kind === "extractWebData") {
+    step.dataMode = $("#dataMode").value; step.dataRowSelector = $("#dataRowSelector").value.trim();
+    step.dataFields = $$(".data-capture-field").map(row => ({ name: row.querySelector(".data-field-name").value.trim(), selector: row.querySelector(".data-field-selector").value.trim(), mode: row.querySelector(".data-field-mode").value, attribute: row.querySelector(".data-field-attribute").value.trim(), required: row.querySelector(".data-field-required").checked }));
+    step.dataAppend = $("#dataAppend").checked; step.dataIncludeSource = $("#dataIncludeSource").checked; step.dataLimit = Number($("#dataLimit").value);
+    if (step.dataMode !== "single" && !step.dataRowSelector) throw new Error("請填入清單項目或表格的 CSS 定位。");
+    if (step.dataMode !== "table" && (!step.dataFields.length || step.dataFields.length > 100)) throw new Error("請設定 1～100 個欄位。");
+    const names = step.dataFields.map(field => field.name);
+    if (step.dataMode !== "table" && (names.some(name => !name || name.length > 100 || ["_sourceUrl","_capturedAt","__proto__","constructor","prototype"].includes(name)) || new Set(names).size !== names.length)) throw new Error("欄位名稱不可空白、重複或使用保留名稱。");
+    if (step.dataMode !== "table" && step.dataFields.some(field => field.mode === "attribute" && !field.attribute)) throw new Error("屬性擷取欄位需要填寫屬性名稱。");
+    if (!Number.isInteger(step.dataLimit) || step.dataLimit < 1 || step.dataLimit > 5000) throw new Error("單次擷取上限須為 1～5000 的整數。");
+  } else {
+    step.documentFormat = $("#documentFormat").value; step.documentTitle = $("#documentTitle").value.trim();
+    step.documentFileName = $("#documentFileName").value.trim(); step.documentUseLocalTime = $("#documentUseLocalTime").checked;
+    step.documentColumns = $("#documentColumns").value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    step.documentLayout = $("#documentLayout").value; step.documentSheetName = $("#documentSheetName").value.trim();
+    if (new Set(step.documentColumns).size !== step.documentColumns.length) throw new Error("輸出欄位不可重複。");
+  }
+}
+
 function kindSpecificFields(step) {
+  if (["extractWebData", "saveDocument"].includes(step.kind)) return webDataFields(step);
   if (step.kind === "savePagePdf") {
     const pageSize = step.pdfPageSize === "Letter" ? "Letter" : "A4";
     const orientation = step.pdfOrientation === "landscape" ? "landscape" : "portrait";
@@ -4062,7 +4131,7 @@ async function api(url, options = {}) {
 }
 
 function stepOptions(selected) {
-  return ["navigate","newTab","switchTab","manual","click","dblclick","extractText","extractPattern","clipboard","fill","select","upload","press","hover","check","uncheck","wait","waitNewFirst","captureListSnapshot","waitNewListItem","assert","download","savePagePdf","screenshot","script","condition","loop"].map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${stepKindWrite(value)}</option>`).join("");
+  return ["navigate","newTab","switchTab","manual","click","dblclick","extractWebData","saveDocument","extractText","extractPattern","clipboard","fill","select","upload","press","hover","check","uncheck","wait","waitNewFirst","captureListSnapshot","waitNewListItem","assert","download","savePagePdf","screenshot","script","condition","loop"].map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${stepKindWrite(value)}</option>`).join("");
 }
 
 function adapterOptions(selected) {
@@ -4078,7 +4147,7 @@ function verifyOptions(selected) {
 }
 
 function stepKindWrite(kind) {
-  return ({ navigate:"前往網址", newTab:"開新分頁", switchTab:"切換分頁", manual:"人工操作", click:"點擊", dblclick:"雙擊", extractText:"擷取文字", extractPattern:"擷取樣式", clipboard:"複製剪貼簿", fill:"填入", select:"選擇", upload:"上傳檔案", press:"鍵盤按鍵", hover:"移至元件", check:"勾選", uncheck:"取消勾選", wait:"等待", waitNewFirst:"等待新第一筆", captureListSnapshot:"擷取清單快照", waitNewListItem:"等待清單新資料", assert:"驗證", download:"下載", savePagePdf:"保存頁面 PDF", screenshot:"截圖", script:"頁面腳本", condition:"條件", loop:"迴圈" })[kind] ?? kind;
+  return ({ navigate:"前往網址", newTab:"開新分頁", switchTab:"切換分頁", manual:"人工操作", click:"點擊", dblclick:"雙擊", extractWebData:"擷取網頁資料", saveDocument:"保存彙整文件", extractText:"擷取文字", extractPattern:"擷取樣式", clipboard:"複製剪貼簿", fill:"填入", select:"選擇", upload:"上傳檔案", press:"鍵盤按鍵", hover:"移至元件", check:"勾選", uncheck:"取消勾選", wait:"等待", waitNewFirst:"等待新第一筆", captureListSnapshot:"擷取清單快照", waitNewListItem:"等待清單新資料", assert:"驗證", download:"下載", savePagePdf:"保存頁面 PDF", screenshot:"截圖", script:"頁面腳本", condition:"條件", loop:"迴圈" })[kind] ?? kind;
 }
 
 function JSONTape(value) { return JSON.stringify(value, null, 2); }

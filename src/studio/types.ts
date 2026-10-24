@@ -25,6 +25,8 @@ export type StepKind =
   | "script"
   | "condition"
   | "loop"
+  | "extractWebData"
+  | "saveDocument"
   | "extractText"
   | "extractPattern"
   | "clipboard"
@@ -122,6 +124,20 @@ export interface WorkflowStep {
   loopValues?: string[];
   loopParameter?: string;
   steps?: WorkflowStep[];
+  dataCollection?: string;
+  dataMode?: "single" | "list" | "table";
+  dataRowSelector?: string;
+  dataFields?: { name: string; selector: string; mode?: "text" | "html" | "attribute"; attribute?: string; required?: boolean }[];
+  dataAppend?: boolean;
+  dataIncludeSource?: boolean;
+  dataLimit?: number;
+  documentFormat?: "docx" | "json" | "xlsx";
+  documentTitle?: string;
+  documentFileName?: string;
+  documentColumns?: string[];
+  documentLayout?: "table" | "paragraphs";
+  documentUseLocalTime?: boolean;
+  documentSheetName?: string;
   /** Variable name that receives text/pattern extraction output. */
   outputVariable?: string;
   /** Text extraction mode for extractText. */
@@ -210,6 +226,10 @@ export interface BrowserSettings {
   viewportWidth: number;
   viewportHeight: number;
   reuseProfile: boolean;
+  /** Explicit opt-in: load encrypted CDP login state into isolated managed contexts. */
+  authStateEnabled?: boolean;
+  authVerifyUrl?: string;
+  authSuccessSelector?: string;
   /** When true, the dedicated managed browser profile downloads PDFs instead of opening Chrome PDF preview. */
   downloadPdfInsteadOfPreview: boolean;
   /** Local Chrome DevTools Protocol endpoint used when connectionMode is cdp. */

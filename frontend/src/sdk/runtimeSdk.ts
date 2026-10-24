@@ -63,8 +63,31 @@ export class StudioRuntimeSdk {
     return this.adapter.syncWorkstationDraft(project);
   }
 
-  saveWorkstation(project: Project): Promise<boolean> {
-    return this.adapter.saveWorkstationDraft(project);
+  async saveWorkstation(project: Project): Promise<boolean> {
+    // The legacy bridge predates the encrypted-auth feature and only knows the
+    // original workstation fields. Persist new opt-in settings without ever
+    // sending the passphrase or the captured cookies in a project update.
+    const saved = await this.adapter.saveWorkstationDraft(project);
+    if (!saved) return false;
+    const current = this.adapter.snapshot().state.project;
+    if (!current || current.id !== project.id) return false;
+    const authBrowser = (project as any).browser ?? {};
+    const updated = {
+      ...current,
+      browser: {
+        ...(current as any).browser,
+        authStateEnabled: authBrowser.authStateEnabled === true,
+        authVerifyUrl: String(authBrowser.authVerifyUrl || '').trim(),
+        authSuccessSelector: String(authBrowser.authSuccessSelector || '').trim()
+      }
+    };
+    const res = await fetch(`/api/studio/projects/${encodeURIComponent(project.id)}`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(updated)
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || '登入狀態設定儲存失敗');
+    this.adapter.adoptProject(json.project);
+    return true;
   }
 
   async actOnWorkstation(action: WorkstationAction, project: Project, payload?: Record<string, unknown>): Promise<unknown> {

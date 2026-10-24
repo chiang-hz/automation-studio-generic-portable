@@ -9,6 +9,7 @@ runtime/
 debug/
 downloads/
 exports/
+*.authvault
 
 # User Data and Logs
 data/profiles/
@@ -41,6 +42,9 @@ Thumbs.db
 
 # Development Hotfix and Version Notes (irrelevant to program execution)
 *_HOTFIX.md
+*-FIX-NOTES.md
+*-NOTES.md
+AUTH-STATE-FIX-NOTES.md
 V[0-9]*.md
 V[0-9]*.html
 .vscode/

@@ -26,7 +26,7 @@ export function HelpPage({ sourceView }: { sourceView: HTMLElement }) {
   }, [sourceView]);
 
   return <div className="studio-page support-page">
-    <section className="studio-card support-page-intro"><div className="support-intro-icon"><BookOpen size={20}/></div><div><div className="studio-eyebrow">HELP & SUPPORT</div><h2>使用說明</h2><p>流程編輯、PDF 保存、批次資料與發布的操作指南，已依 2.1.0 版更新。</p></div><Button variant="secondary" onClick={() => runtimeSdk.navigate('report')}><LifeBuoy size={15}/>回報問題</Button></section>
+    <section className="studio-card support-page-intro"><div className="support-intro-icon"><BookOpen size={20}/></div><div><div className="studio-eyebrow">HELP & SUPPORT</div><h2>使用說明</h2><p>流程編輯、資料擷取、Word／JSON／Excel 保存、批次資料與發布的操作指南，已依 2.2.0 版更新。</p></div><Button variant="secondary" onClick={() => runtimeSdk.navigate('report')}><LifeBuoy size={15}/>回報問題</Button></section>
     <div className="support-document" ref={content}/>
   </div>;
 }
@@ -92,7 +92,7 @@ export function ReportPage() {
       </div>
       <div className="studio-button-row report-actions"><Button variant="primary" onClick={send}><Mail size={15}/>開啟郵件並回報</Button><Button onClick={() => void copy()}>{copied ? <Check size={15}/> : <Clipboard size={15}/>}複製回報內容</Button><Button variant="ghost" onClick={clear}>清除</Button></div>
     </section>
-    <aside className="studio-card report-context-card"><header className="studio-card-heading"><div><div className="studio-eyebrow">DIAGNOSTIC CONTEXT</div><h2>將自動附帶</h2><p>辨識環境所需的非敏感資訊。</p></div><Sparkles size={18}/></header><dl className="report-context"><div><dt>系統版本</dt><dd>Automation Studio V2.1.0</dd></div><div><dt>目前專案</dt><dd>{project?.name ?? '尚未開啟專案'}</dd></div><div><dt>專案 ID</dt><dd className="mono">{project?.id ?? '—'}</dd></div><div><dt>瀏覽器模式</dt><dd>{cdp ? 'Chrome CDP 接管' : 'Automation Studio 管理瀏覽器'}</dd></div><div><dt>回報時間</dt><dd>{new Intl.DateTimeFormat('zh-TW', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}</dd></div></dl><div className="studio-notice"><b>沒有預設郵件程式？</b><span>按「複製回報內容」，再貼到組織使用的郵件系統中。</span></div></aside>
+    <aside className="studio-card report-context-card"><header className="studio-card-heading"><div><div className="studio-eyebrow">DIAGNOSTIC CONTEXT</div><h2>將自動附帶</h2><p>辨識環境所需的非敏感資訊。</p></div><Sparkles size={18}/></header><dl className="report-context"><div><dt>系統版本</dt><dd>Automation Studio V2.2.0</dd></div><div><dt>目前專案</dt><dd>{project?.name ?? '尚未開啟專案'}</dd></div><div><dt>專案 ID</dt><dd className="mono">{project?.id ?? '—'}</dd></div><div><dt>瀏覽器模式</dt><dd>{cdp ? 'Chrome CDP 接管' : 'Automation Studio 管理瀏覽器'}</dd></div><div><dt>回報時間</dt><dd>{new Intl.DateTimeFormat('zh-TW', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}</dd></div></dl><div className="studio-notice"><b>沒有預設郵件程式？</b><span>按「複製回報內容」，再貼到組織使用的郵件系統中。</span></div></aside>
   </div>;
 }
 

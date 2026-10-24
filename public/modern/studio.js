@@ -24234,6 +24234,8 @@ var RM = {
 	check: hf,
 	press: jm,
 	upload: zm,
+	extractWebData: nf,
+	saveDocument: zf,
 	extractText: nf,
 	extractPattern: sm,
 	clipboard: kf,
@@ -62407,7 +62409,7 @@ function Tne({ sourceView: e }) {
 						children: "HELP & SUPPORT"
 					}),
 					/* @__PURE__ */ (0, Y.jsx)("h2", { children: "使用說明" }),
-					/* @__PURE__ */ (0, Y.jsx)("p", { children: "流程編輯、PDF 保存、批次資料與發布的操作指南，已依 2.1.0 版更新。" })
+					/* @__PURE__ */ (0, Y.jsx)("p", { children: "流程編輯、資料擷取、Word／JSON／Excel 保存、批次資料與發布的操作指南，已依 2.2.0 版更新。" })
 				] }),
 				/* @__PURE__ */ (0, Y.jsxs)(Q, {
 					variant: "secondary",
@@ -62622,7 +62624,7 @@ function Ene() {
 				/* @__PURE__ */ (0, Y.jsxs)("dl", {
 					className: "report-context",
 					children: [
-						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "系統版本" }), /* @__PURE__ */ (0, Y.jsx)("dd", { children: "Automation Studio V2.1.0" })] }),
+						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "系統版本" }), /* @__PURE__ */ (0, Y.jsx)("dd", { children: "Automation Studio V2.2.0" })] }),
 						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "目前專案" }), /* @__PURE__ */ (0, Y.jsx)("dd", { children: o?.name ?? "尚未開啟專案" })] }),
 						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "專案 ID" }), /* @__PURE__ */ (0, Y.jsx)("dd", {
 							className: "mono",

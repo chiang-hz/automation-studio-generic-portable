@@ -8,6 +8,7 @@ import { WorkflowRunner, findWorkflowStepById, preflightWorkflowDomains, runtime
 import { RecorderManager } from "./recorder.ts";
 import { clearBrowserProfile, getBrowserProfileStatus } from "./profile.ts";
 import { inspectCdpEndpoint } from "./cdp.ts";
+import {inspectCDPTabs, detectCDPAuthentication} from "./authBridge/auth-discovery.mjs";
 import { createDefaultProject, createImportedProject, StudioStore } from "./store.ts";
 import { AIService } from "./ai/service.ts";
 import { DEFAULT_AI_SETTINGS } from "./ai/config.ts";
@@ -62,7 +63,7 @@ export async function createStudioRouter(): Promise<StudioRouter> {
         sendJson(response, 200, {
           ok: true,
           server: "automation-studio",
-          version: "2.1.0",
+          version: "2.2.4",
           baseVersion: "0.2.7",
           runtime: await runtimeStatus(),
           platform: process.platform
@@ -119,9 +120,64 @@ export async function createStudioRouter(): Promise<StudioRouter> {
         if (request.method === "DELETE" && parts.length === 2) {
           await recorder.stop(projectId).catch(() => undefined);
           await clearBrowserProfile(projectId).catch(() => undefined);
+          await runner.authSessions.revoke(await store.getProject(projectId));
           await store.deleteProject(projectId);
           sendJson(response, 200, { ok: true });
           return true;
+        }
+        if (parts[2] === "auth" && parts.length >= 4) {
+          const remote = String(request.socket.remoteAddress || "").replace(/^::ffff:/, "");
+          if (!["127.0.0.1", "::1"].includes(remote)) throw new Error("登入狀態管理僅允許由本機 Automation Studio 操作。");
+          const project = await store.getProject(projectId);
+          const action = parts[3];
+          if (request.method === "GET" && action === "status") {
+            sendJson(response, 200, {auth: await runner.authSessions.status(project)});
+            return true;
+          }
+          if (request.method === "GET" && action === "tabs") {
+            const playwright = await import("playwright");
+            const result = await inspectCDPTabs({chromium: playwright.chromium, endpoint: project.browser.cdpEndpoint || "http://127.0.0.1:9222", allowedDomains: project.allowedDomains});
+            sendJson(response, 200, result);
+            return true;
+          }
+          if (request.method === "POST" && action === "detect") {
+            const origin = request.headers.origin;
+            const host = request.headers.host;
+            if (origin && (!host || new URL(origin).host !== host)) throw new Error("登入辨識僅接受同來源的本機操作。");
+            const body = await readJsonBody(request);
+            const mode = body.mode === "pick" ? "pick" : "auto";
+            const index = body.tabIndex === null || body.tabIndex === undefined ? undefined : Number(body.tabIndex);
+            const playwright = await import("playwright");
+            const detected = await detectCDPAuthentication({chromium: playwright.chromium, endpoint: project.browser.cdpEndpoint || "http://127.0.0.1:9222", allowedDomains: project.allowedDomains, mode, tabIndex: index});
+            sendJson(response, 200, {detected});
+            return true;
+          }
+          if (request.method === "POST" && ["capture", "unlock", "lock"].includes(action) || request.method === "DELETE" && action === "saved") {
+            const origin = request.headers.origin;
+            const host = request.headers.host;
+            if (origin && (!host || new URL(origin).host !== host)) throw new Error("登入狀態管理僅接受同來源的使用者操作。");
+            if (request.method === "DELETE") {
+              await runner.authSessions.revoke(project);
+              sendJson(response, 200, {auth: await runner.authSessions.status(project)});
+              return true;
+            }
+            if (action === "lock") {
+              runner.authSessions.lock(project.id);
+              sendJson(response, 200, {auth: await runner.authSessions.status(project)});
+              return true;
+            }
+            const body = await readJsonBody(request);
+            const passphrase = typeof body.passphrase === "string" ? body.passphrase : "";
+            if (passphrase.length < 16 || passphrase.length > 1024) throw new Error("登入狀態加密密語必須為 16 至 1024 字元。");
+            if (action === "capture") {
+              const result = await runner.authSessions.capture(project, passphrase);
+              sendJson(response, 200, {auth: await runner.authSessions.status(project), result});
+            } else {
+              await runner.authSessions.unlock(project, passphrase);
+              sendJson(response, 200, {auth: await runner.authSessions.status(project)});
+            }
+            return true;
+          }
         }
         if (parts[2] === "cdp" && parts[3] === "test" && request.method === "POST") {
           const body = await readJsonBody(request);
@@ -533,7 +589,7 @@ export async function createStudioRouter(): Promise<StudioRouter> {
       const status = error instanceof SyntaxError ? 400 : /ENOENT/.test(String(error)) ? 404 : 500;
       sendJson(response, status, {
         error: {
-          code: status === 404 ? "NOT_FOUND" : "REQUEST_FAILED",
+          code: status === 404 ? "NOT_FOUND" : (typeof (error as {code?: unknown})?.code === "string" ? (error as {code: string}).code : "REQUEST_FAILED"),
           message: redactText(error instanceof Error ? error.message : String(error))
         }
       });

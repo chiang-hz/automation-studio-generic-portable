@@ -7,7 +7,7 @@ export const kindIcons:Record<string,typeof Globe>={
   navigate:Globe,newTab:Globe,switchTab:Globe,
   click:MousePointer2,dblclick:MousePointer2,hover:MousePointer2,
   fill:TextCursorInput,select:List,check:CheckCircle2,press:Terminal,upload:Upload,
-  extractText:Braces,extractPattern:Search,clipboard:Copy,
+  extractWebData:Braces,saveDocument:FileDown,extractText:Braces,extractPattern:Search,clipboard:Copy,
   wait:Clock,waitNewFirst:Clock,captureListSnapshot:List,waitNewListItem:Clock,assert:CheckCircle2,
   download:Download,savePagePdf:FileDown,manual:Shield,condition:GitBranch,loop:Repeat2
 };

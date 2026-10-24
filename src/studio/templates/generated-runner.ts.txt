@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { captureWebData, saveCollectedDocument } from "./webData.ts";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import os from "node:os";
@@ -1042,6 +1043,15 @@ const executeStep = async (step: any): Promise<void> => {
   else if (step.kind === "captureListSnapshot") await captureListSnapshot(step);
   else if (step.kind === "waitNewListItem") await waitForNewListItem(step);
   else if (step.kind === "assert") await verify(step);
+  else if (step.kind === "extractWebData") {
+    const scope = scopeOf(step);
+    const added = await captureWebData(scope, { ...step, timeoutMs: step.timeoutMs ?? workflow.browser.defaultTimeoutMs }, variables, expand, page.url());
+    console.log(`已擷取 ${added} 筆資料`);
+  }
+  else if (step.kind === "saveDocument") {
+    const filePath = await saveCollectedDocument(step, variables, pdfDownloadDir, expand);
+    console.log(`彙整文件已保存：${filePath}`);
+  }
   else if (step.kind === "extractPattern") {
     const sourceName = String(step.sourceVariable || "").trim();
     const outputName = String(step.outputVariable || "").trim();

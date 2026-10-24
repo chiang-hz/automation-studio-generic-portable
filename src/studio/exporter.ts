@@ -23,7 +23,7 @@ export class ExportService {
       name: "EXPORT-MANIFEST.json",
       data: json({
         product: "Automation Studio",
-        productVersion: "2.1.0",
+        productVersion: "2.2.4",
         exportedAt: new Date().toISOString(),
         projectId: project.id,
         projectVersion: project.version,
@@ -79,7 +79,11 @@ async function typescriptEntries(project: WorkflowProject, selection: ExportSele
   const templatePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "templates", "generated-runner.ts.txt");
   const runner = await fs.readFile(templatePath, "utf8");
   const stealthHelper = await fs.readFile(new URL("./stealth.ts", import.meta.url), "utf8");
+  const webDataHelper = await fs.readFile(new URL("./webData.ts", import.meta.url), "utf8");
+  const zipHelper = await fs.readFile(new URL("./zip.ts", import.meta.url), "utf8");
   const entries: ZipEntry[] = [
+    { name: `${base}/src/webData.ts`, data: webDataHelper },
+    { name: `${base}/src/zip.ts`, data: zipHelper },
     { name: `${base}/package.json`, data: json({ name: project.id, version: project.version, private: true, type: "module", scripts: { start: "node --experimental-strip-types src/run.ts", test: "node --experimental-strip-types --test tests/*.test.ts" }, dependencies: { playwright: "^1.60.0", ...(project.browser.stealth === true && project.browser.connectionMode !== "cdp" ? { "playwright-extra": "^4.3.6", "puppeteer-extra-plugin-stealth": "^2.11.2" } : {}) } }) },
     { name: `${base}/tsconfig.json`, data: json({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", strict: true }, include: ["src/**/*.ts", "tests/**/*.ts"] }) },
     { name: `${base}/src/workflow.json`, data: json(project) },

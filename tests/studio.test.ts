@@ -981,13 +981,15 @@ test("相依下拉選單會在測試與批次參數依父參數動態篩選", as
   assert.ok(types.includes("dependentOptions?: Record<string, string[]>"));
 });
 
-test("Windows 啟動器會依專案設定停用 Node TLS 驗證，但 TypeScript 匯出仍維持驗證", async () => {
+test("Windows 可攜啟動器使用系統 CA 並維持 TLS 驗證，TypeScript 匯出亦維持驗證", async () => {
   const mainStart = await fs.readFile(path.resolve("./start.bat"), "utf8");
   const legacyStart = await fs.readFile(path.resolve("./start-ebas-ui.bat"), "utf8");
-  assert.match(mainStart, /NODE_USE_SYSTEM_CA%"=="" set "NODE_USE_SYSTEM_CA=1"/);
-  assert.match(legacyStart, /NODE_USE_SYSTEM_CA%"=="" set "NODE_USE_SYSTEM_CA=1"/);
-  assert.match(mainStart, /(?:^|\r?\n)\s*set\s+"NODE_TLS_REJECT_UNAUTHORIZED=0"/i);
-  assert.match(legacyStart, /(?:^|\r?\n)\s*set\s+"NODE_TLS_REJECT_UNAUTHORIZED=0"/i);
+  assert.match(mainStart, /set "NODE_USE_SYSTEM_CA=1"/);
+  assert.match(legacyStart, /set "NODE_USE_SYSTEM_CA=1"/);
+  assert.match(mainStart, /set "NODE_TLS_REJECT_UNAUTHORIZED="/);
+  assert.doesNotMatch(mainStart, /set "NODE_TLS_REJECT_UNAUTHORIZED=0"/);
+  assert.match(legacyStart, /set "NODE_TLS_REJECT_UNAUTHORIZED="/);
+  assert.doesNotMatch(legacyStart, /set "NODE_TLS_REJECT_UNAUTHORIZED=0"/);
 
   const project = createGenericExample();
   project.id = `system-ca-export-${Date.now()}`;
@@ -1132,15 +1134,15 @@ test("v1.0.40 publish autosave, empty batch state, debug tabs and layout refinem
 });
 
 
-test("Automation Studio product metadata is v2.0.4 and the classic interface is removed", async () => {
-  assert.equal((await fs.readFile(path.resolve("VERSION"), "utf8")).trim(), "2.0.4");
+test("Automation Studio product metadata is v2.2.4 and the classic interface is removed", async () => {
+  assert.equal((await fs.readFile(path.resolve("VERSION"), "utf8")).trim(), "2.2.4");
   const pkg = JSON.parse(await fs.readFile(path.resolve("package.json"), "utf8"));
   const router = await fs.readFile(path.resolve("src/studio/router.ts"), "utf8");
   const exporter = await fs.readFile(path.resolve("src/studio/exporter.ts"), "utf8");
-  assert.equal(pkg.version, "2.0.4");
+  assert.equal(pkg.version, "2.2.4");
   assert.match(pkg.version, /^\d+\.[0-9]\.[0-9]$/);
-  assert.match(router, /version: "2\.0\.4"/);
-  assert.match(exporter, /productVersion: "2\.0\.4"/);
+  assert.match(router, /version: "2\.2\.4"/);
+  assert.match(exporter, /productVersion: "2\.2\.4"/);
   const versioning = await fs.readFile(path.resolve("VERSIONING.md"), "utf8");
   assert.match(versioning, /MAJOR\.MINOR\.PATCH/);
   const modernUi = await fs.readFile(path.resolve("frontend/src/main.tsx"), "utf8");

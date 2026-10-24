@@ -1,11 +1,14 @@
 import { prepareStudioChromium } from "./stealth.ts";
 import fs from "node:fs/promises";
+import { captureWebData, saveCollectedDocument } from "./webData.ts";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { createId, StudioStore } from "./store.ts";
 import { browserLaunchMessage, DESKTOP_VIEWPORT, resolveStudioBrowser } from "./browser.ts";
 import { connectToCdpBrowser } from "./cdp.ts";
+import { AuthSessionManager } from "./authSessions.ts";
+import { ensureManagedAuthentication } from "./managedAuthRecovery.ts";
 import { ensurePdfDownloadPreference, resolveProjectProfileDir, resolveBatchWorkerProfileDir } from "./profile.ts";
 import { effectiveBatchConcurrency, MAX_BATCH_CONCURRENCY } from "./concurrency.ts";
 import { captureFailureDiagnostics } from "./debugDiagnostics.ts";
@@ -84,6 +87,7 @@ export class WorkflowRunner {
     batchWorker?: number;
     concurrency: number;
   }> = [];
+  private readonly runProjectIds = new Map<string, string>();
   private readonly activeResources = new Set<string>();
   private readonly resourceOwners = new Map<string, string>();
   private exclusiveRunActive = false;
@@ -95,6 +99,7 @@ export class WorkflowRunner {
     completedManualStepIds: Set<string>;
   }>();
   private activeCount = 0;
+  readonly authSessions = new AuthSessionManager();
   private readonly store: StudioStore;
   private readonly acquireActiveSession?: (projectId: string) => ActiveRecorderBrowserSession | undefined;
 
@@ -135,6 +140,7 @@ export class WorkflowRunner {
     };
     await fs.mkdir(debugDir, { recursive: true });
     await this.store.saveRun(run);
+    this.runProjectIds.set(runId, project.id);
     this.activeRuns.set(runId, {
       cancelled: false,
       manualContinue: false,
@@ -147,6 +153,7 @@ export class WorkflowRunner {
   }
 
   async startBatch(project: WorkflowProject, parameterRows: Array<Record<string, string | boolean>>): Promise<WorkflowRun[]> {
+    if (project.browser.authStateEnabled === true) this.authSessions.getForRun(project);
     const concurrency = Math.min(effectiveBatchConcurrency(project), Math.max(1, parameterRows.length));
     const batchSessionIds = Array.from({ length: concurrency }, () => createId("batch-session"));
     const runs: WorkflowRun[] = [];
@@ -252,6 +259,10 @@ export class WorkflowRunner {
       await this.store.saveRun(run);
       await appendEvent(run.debugDir, "run_started", { projectId: project.id, parameters: redactParameters(project, run.parameters), batchWorker: options.batchWorker, batchConcurrency: run.batchConcurrency });
 
+      const useSavedAuth = project.browser.connectionMode === "managed" && project.browser.authStateEnabled === true;
+      // Reuse the *same* already-authorized context for later rows on this worker.
+      // A freshly cloned Storage State is NOT equivalent to a browser session on
+      // sites with per-browser or human verification requirements.
       const cachedBatchSession = options.batchSessionId ? this.batchSessions.get(options.batchSessionId) : undefined;
       if (cachedBatchSession && cachedBatchSession.context && !(cachedBatchSession.context.isClosed?.() ?? false)) {
         browser = cachedBatchSession.browser;
@@ -269,7 +280,7 @@ export class WorkflowRunner {
         });
       } else {
         // Parallel workers own independent profiles and never borrow the recorder.
-        borrowedSession = options.batchWorker ? undefined : this.acquireActiveSession?.(project.id);
+        borrowedSession = options.batchWorker || useSavedAuth ? undefined : this.acquireActiveSession?.(project.id);
       }
       if (!reusedBatchSession && borrowedSession) {
         const expectedStealth = project.browser.stealth === true && project.browser.connectionMode !== "cdp";
@@ -312,7 +323,7 @@ export class WorkflowRunner {
             ...(browserResolution.channel ? { channel: browserResolution.channel } : {}),
             ...(browserResolution.executablePath ? { executablePath: browserResolution.executablePath } : {})
           };
-          if (project.browser.reuseProfile) {
+          if (project.browser.reuseProfile && !useSavedAuth) {
             const profileDir = options.batchWorker ? resolveBatchWorkerProfileDir(project.id, options.batchWorker) : resolveProjectProfileDir(project.id);
             await fs.mkdir(profileDir, { recursive: true });
             if (project.browser.downloadPdfInsteadOfPreview === true) {
@@ -334,10 +345,52 @@ export class WorkflowRunner {
             } catch (error) {
               throw new Error(browserLaunchMessage(project.browser.channel, browserResolution, error), { cause: error });
             }
-            context = await browser.newContext({ acceptDownloads: true, viewport: DESKTOP_VIEWPORT });
+            context = await browser.newContext({
+              acceptDownloads: true,
+              viewport: DESKTOP_VIEWPORT,
+              ...(useSavedAuth ? { storageState: structuredClone(this.authSessions.getForRun(project).storageState) } : {})
+            });
           }
           page = context.pages()[0] ?? await context.newPage();
         }
+      }
+      // Verify BOTH newly-created managed contexts and preserved batch-worker
+      // contexts. Never proceed to click the site's actions before authentication.
+      if (useSavedAuth) {
+        // A locked/expired vault cannot be repaired by interacting with the
+        // webpage; request an explicit unlock instead of a futile challenge.
+        this.authSessions.getForRun(project);
+        const outcome = await ensureManagedAuthentication({
+          headless: project.browser.headless,
+          verify: () => this.authSessions.verify(page, project),
+          pauseForHuman: async () => {
+            run.status = "paused";
+            run.errorMessage = "已載入保存的登入狀態，但網站要求重新登入或人工安全驗證。請在顯示的管理瀏覽器完成網站驗證，再按『人工操作完成，繼續執行』。此功能不會自動通過 Cloudflare。";
+            await this.store.saveRun(run);
+            await page.bringToFront().catch(() => undefined);
+            const signal = this.activeRuns.get(run.id);
+            if (signal) signal.manualContinue = false;
+            try {
+              await waitForManualAction(
+                page, run.debugDir, {
+                  id: "managed-auth-checkpoint", name: "管理瀏覽器登入驗證", kind: "manual", enabled: true,
+                  manualCompletionMode: "button", timeoutMs: 600_000,
+                  value: "請在此管理瀏覽器完成登入或 Cloudflare 人工驗證後，再返回執行監控按『人工操作完成，繼續執行』。"
+                } as WorkflowStep,
+                run.parameters, variables, false,
+                () => this.activeRuns.get(run.id)?.manualContinue === true,
+                () => this.activeRuns.get(run.id)?.cancelled === true
+              );
+            } finally {
+              if (run.status === "paused") {
+                run.status = "running";
+                run.errorMessage = undefined;
+                await this.store.saveRun(run);
+              }
+            }
+          }
+        });
+        await appendEvent(run.debugDir, "managed_auth_verified", {result: outcome, runId: run.id, reusedBatchSession});
       }
       await appendEvent(run.debugDir, "browser_stealth", {
         requested: project.browser.stealth === true,
@@ -355,6 +408,15 @@ export class WorkflowRunner {
         await appendEvent(run.debugDir, "run_completed", { downloads: run.downloads });
       }
     } catch (error) {
+      if ((error as {code?: string})?.code === "AUTH_INVALID") {
+        for (const pending of this.queue.filter(job => job.project.id === project.id && job.project.browser.authStateEnabled)) {
+          const signal = this.activeRuns.get(pending.run.id);
+          if (signal) signal.cancelled = true;
+        }
+        for (const [activeId, signal] of this.activeRuns.entries()) {
+          if (activeId !== run.id && this.runProjectIds.get(activeId) === project.id) signal.cancelled = true;
+        }
+      }
       run.status = run.status === "cancelled" ? "cancelled" : "failed";
       run.errorCode = classifyError(error);
       run.errorMessage = error instanceof Error ? error.message : String(error);
@@ -404,6 +466,7 @@ export class WorkflowRunner {
         }
       }
       this.activeRuns.delete(run.id);
+      this.runProjectIds.delete(run.id);
       try {
         // "僅失敗任務"只刪除本次成功 run 的 Debug，不掃描其他歷史資料。
         await this.store.cleanupCompletedRunDebug(run);
@@ -418,6 +481,12 @@ export class WorkflowRunner {
         console.warn(`[run-history-retention] 到期清理失敗：${error instanceof Error ? error.message : String(error)}`);
       });
     }
+  }
+
+  private resolveRunDownloadDir(project: WorkflowProject, run: WorkflowRun, directory: string): string {
+    const root = path.resolve(directory);
+    if (run.mode !== "batch" || project.browser.authStateEnabled !== true) return root;
+    return path.join(root, "auth-batch", run.id);
   }
 
   private async executeSteps(
@@ -541,6 +610,16 @@ export class WorkflowRunner {
     const scoped = step.autoFrameSearch ? (resolveFrameOptional(page, step.frame) ?? page) : resolveFrame(page, step.frame);
     const timeout = step.timeoutMs ?? project.browser.defaultTimeoutMs;
 
+    if (step.kind === "extractWebData") {
+      const added = await captureWebData(scoped, { ...step, timeoutMs: timeout }, variables, expand, page.url());
+      return { message: `已擷取 ${added} 筆資料至集合 {{${step.dataCollection || "records"}}}` };
+    }
+    if (step.kind === "saveDocument") {
+      const settings = await this.store.getSettings();
+      const directory = this.resolveRunDownloadDir(project, run, String(settings.defaultDownloadDir || "./downloads"));
+      const filePath = await saveCollectedDocument(step, variables, directory, expand);
+      return { message: `彙整文件已保存：${filePath}`, downloadPath: filePath };
+    }
     if (step.kind === "manual") {
       const activeSignal = this.activeRuns.get(run.id);
       if (run.mode === "batch" && activeSignal?.reusableBatchManualSteps.has(step.id)) {
@@ -651,7 +730,7 @@ export class WorkflowRunner {
       if (typeof page.pdf !== "function") throw new Error("保存頁面 PDF 需要 Chromium／Chrome 瀏覽器分頁；目前連線不支援原生列印 PDF。");
       const studioSettings = await this.store.getSettings();
       const configuredDownloadDir = String(studioSettings.defaultDownloadDir ?? "./downloads").trim() || "./downloads";
-      const targetDir = path.resolve(configuredDownloadDir);
+      const targetDir = this.resolveRunDownloadDir(project, run, configuredDownloadDir);
       await fs.mkdir(targetDir, { recursive: true });
       const configuredName = expand(step.pdfFileName ?? "");
       const fileName = safeFile(buildPagePdfFilename(configuredName, step.name || step.id, step.pdfUseLocalTime !== false));
@@ -777,7 +856,7 @@ export class WorkflowRunner {
       }
       const studioSettings = await this.store.getSettings();
       const configuredDownloadDir = String(studioSettings.defaultDownloadDir ?? "./downloads").trim() || "./downloads";
-      const targetDir = path.resolve(configuredDownloadDir);
+      const targetDir = this.resolveRunDownloadDir(project, run, configuredDownloadDir);
       await fs.mkdir(targetDir, { recursive: true });
       const originalName = safeFile(capture.kind === "download"
         ? decodedDownloadNameFromUrl(capture.url ?? "") || capture.download.suggestedFilename?.() || `${step.id}.bin`
@@ -2263,6 +2342,7 @@ function countEnabledSteps(steps: WorkflowStep[]): number {
 
 function classifyError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  if ((error as {code?: string})?.code === "AUTH_INVALID") return "AUTH_INVALID";
   if (isHumanVerificationError(error)) return "HUMAN_VERIFICATION_REQUIRED";
   if (isRateLimitError(error)) return "RATE_LIMITED";
   if (/Playwright 執行核心/.test(message)) return "RUNTIME_MISSING";

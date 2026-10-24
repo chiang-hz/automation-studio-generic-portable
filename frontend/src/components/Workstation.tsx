@@ -16,6 +16,9 @@ type BrowserSettings = {
   reuseProfile?: boolean;
   downloadPdfInsteadOfPreview?: boolean;
   stealth?: boolean;
+  authStateEnabled?: boolean;
+  authVerifyUrl?: string;
+  authSuccessSelector?: string;
   headless?: boolean;
   [key: string]: unknown;
 };
@@ -32,6 +35,9 @@ function cloneProject(project: Project): WorkstationProject {
   copy.browser.channel ??= 'bundled';
   copy.browser.cdpEndpoint ??= 'http://127.0.0.1:9222';
   copy.browser.cdpAutoLaunch ??= true;
+  copy.browser.authStateEnabled ??= false;
+  copy.browser.authVerifyUrl ??= '';
+  copy.browser.authSuccessSelector ??= '';
   copy.browser.cdpInitialPageMode ??= 'first';
   copy.browser.cdpInitialPageTarget ??= '';
   copy.browser.cdpInitialPageIndex ??= 1;
@@ -148,6 +154,9 @@ export function Workstation() {
           {cdpStatus?.error && <p className="field-hint status-error">{cdpStatus.error}</p>}
         </div>}
       </div>
+      {/* Auth-session discovery and storage controls are served by the offline
+          auth-state-panel.js, shared by the prebuilt frontend and source builds.
+          This avoids a duplicate, obsolete manual URL/CSS form. */}
       <div className="workstation-profile"><span className={`pill ${profile?.hasData ? 'status-success' : ''}`}><UserRound size={14}/>{cdp ? '登入狀態由 Chrome 管理' : profile?.hasData ? '瀏覽器資料已保存' : draft.browser.reuseProfile ? '尚未建立登入資料' : '不保留登入狀態'}</span><p>{cdp ? 'CDP 模式使用你連接的 Chrome Profile；Automation Studio 不會建立或清除這份登入資料。' : profile?.error ? profile.error : profile?.hasData ? '下次執行此專案會沿用本機 Profile；網站仍可能要求重新驗證。' : draft.browser.reuseProfile ? '完成登入並正常關閉瀏覽器後，Cookie／網站資料會保存在此專案的本機 Profile。' : '每次新開瀏覽器都使用全新工作階段。'}</p></div>
       <div className="studio-button-row workstation-actions">
         <Button variant="primary" onClick={() => void save()} disabled={busy !== null}><Save size={15}/>{busy === 'save' ? '儲存中…' : '儲存設定'}</Button>
