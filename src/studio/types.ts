@@ -328,6 +328,8 @@ export interface BatchRow {
 export interface ExportSelection {
   portableWorkflow: boolean;
   typescript: boolean;
+  pythonPlaywright?: boolean;
+  pythonSelenium?: boolean;
   skill: boolean;
   includeTests?: boolean;
   includeExamples?: boolean;

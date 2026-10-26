@@ -5,7 +5,7 @@ import { useStudio } from '../store';
 import { studioApi, type ExportSelection } from '../sdk/restClient';
 import { Button } from './ui/button';
 
-const initialSelection: ExportSelection = { portableWorkflow: true, typescript: true, skill: true, includeTests: true, includeExamples: true };
+const initialSelection: ExportSelection = { portableWorkflow: true, typescript: true, skill: true, pythonPlaywright: false, pythonSelenium: false, includeTests: true, includeExamples: true };
 const checkLabels = ['入口網址格式正確', '允許網域已設定', '流程至少有一個啟用步驟', '密碼、Cookie 與工作站不會匯出'];
 
 export function PublishManager() {
@@ -22,7 +22,7 @@ export function PublishManager() {
   const patchSelection = (key: keyof ExportSelection, value: boolean) => setSelection(current => ({ ...current, [key]: value }));
   const exportProject = async () => {
     setError('');
-    if (!selection.portableWorkflow && !selection.typescript && !selection.skill) { setError('請至少選擇一種成果格式。'); return; }
+    if (!selection.portableWorkflow && !selection.typescript && !selection.skill && !selection.pythonPlaywright && !selection.pythonSelenium) { setError('請至少選擇一種成果格式。'); return; }
     setRunning(true);
     try {
       if (runtimeSdk.snapshot().state.dirty) {
@@ -61,6 +61,8 @@ export function PublishManager() {
         {([
           ['portableWorkflow', '可攜工作流程', '可匯入本程式繼續編輯與執行', 'JSON'],
           ['typescript', 'TypeScript', '獨立 Playwright 專案與啟動腳本', 'TS'],
+          ['pythonPlaywright', 'Python · Playwright', '使用 Chrome，優先相容性（套件內有 Node 驅動）', 'PY'],
+          ['pythonSelenium', 'Python · Selenium', '輕量、無 Node.js 執行元件、使用現有 Chrome', 'PY'],
           ['skill', 'SKILL.md', '供 Codex／代理程式理解與操作', 'SKILL']
         ] as const).map(([key, title, detail, badge]) => <label className="export-option" key={key}><input type="checkbox" checked={selection[key]} onChange={event => patchSelection(key, event.target.checked)}/><span><b>{title}</b><small>{detail}</small></span><em>{badge}</em></label>)}
         <div className="checkbox-row"><label><input type="checkbox" checked={selection.includeTests} onChange={event => patchSelection('includeTests', event.target.checked)}/> 包含測試案例</label><label><input type="checkbox" checked={selection.includeExamples} onChange={event => patchSelection('includeExamples', event.target.checked)}/> 包含範例參數</label></div>

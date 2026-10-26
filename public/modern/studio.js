@@ -29902,6 +29902,8 @@ var jI = {
 	portableWorkflow: !0,
 	typescript: !0,
 	skill: !0,
+	pythonPlaywright: !1,
+	pythonSelenium: !1,
 	includeTests: !0,
 	includeExamples: !0
 }, MI = [
@@ -29934,7 +29936,7 @@ function NI() {
 		...n,
 		[e]: t
 	})), u = async () => {
-		if (o(""), !t.portableWorkflow && !t.typescript && !t.skill) {
+		if (o(""), !t.portableWorkflow && !t.typescript && !t.skill && !t.pythonPlaywright && !t.pythonSelenium) {
 			o("請至少選擇一種成果格式。");
 			return;
 		}
@@ -30030,6 +30032,18 @@ function NI() {
 								"TypeScript",
 								"獨立 Playwright 專案與啟動腳本",
 								"TS"
+							],
+							[
+								"pythonPlaywright",
+								"Python · Playwright",
+								"沿用已安裝 Chrome · 相容性優先 · 不含套件",
+								"PY"
+							],
+							[
+								"pythonSelenium",
+								"Python · Selenium",
+								"不需 Node.js · 輕量版 · 不含套件",
+								"PY"
 							],
 							[
 								"skill",

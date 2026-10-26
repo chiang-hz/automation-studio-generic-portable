@@ -1,6 +1,6 @@
 {
   "name": "automation-studio",
-  "version": "2.2.4",
+  "version": "2.4.1",
   "private": true,
   "type": "module",
   "dependencies": {

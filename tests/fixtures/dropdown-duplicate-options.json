@@ -1,0 +1,64 @@
+{
+  "steps": [
+    {
+      "name": "3. 決算報表",
+      "selectors": [
+        {
+          "strategy": "css",
+          "value": "div[role=\"option\"]:visible",
+          "description": "錄製時角色相符的可操作元件"
+        },
+        {
+          "strategy": "css",
+          "value": "div.relative.flex:visible",
+          "description": "錄製時穩定類別路徑；適合清單型資料搭配第一筆/最後一筆"
+        },
+        {
+          "strategy": "text",
+          "value": "決算報表",
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "6. 中央銀行",
+      "selectors": [
+        {
+          "strategy": "css",
+          "value": "div[role=\"option\"]:visible",
+          "description": "錄製時角色相符的可操作元件"
+        },
+        {
+          "strategy": "css",
+          "value": "div.relative.flex:visible",
+          "description": "錄製時穩定類別路徑；適合清單型資料搭配第一筆/最後一筆"
+        },
+        {
+          "strategy": "text",
+          "value": "中央銀行",
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "9. 損益表",
+      "selectors": [
+        {
+          "strategy": "css",
+          "value": "div[role=\"option\"]:visible",
+          "description": "錄製時角色相符的可操作元件"
+        },
+        {
+          "strategy": "css",
+          "value": "div.relative.flex:visible",
+          "description": "錄製時穩定類別路徑；適合清單型資料搭配第一筆/最後一筆"
+        },
+        {
+          "strategy": "text",
+          "value": "損益表",
+          "exact": true
+        }
+      ]
+    }
+  ]
+}

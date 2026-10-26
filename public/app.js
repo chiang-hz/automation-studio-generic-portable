@@ -2923,11 +2923,13 @@ async function exportProject() {
   const selection = {
     portableWorkflow: $("#exportPortable").checked,
     typescript: $("#exportTypescript").checked,
+    pythonPlaywright: $("#exportPythonPlaywright").checked,
+    pythonSelenium: $("#exportPythonSelenium").checked,
     skill: $("#exportSkill").checked,
     includeTests: $("#includeTests").checked,
     includeExamples: $("#includeExamples").checked
   };
-  if (!selection.portableWorkflow && !selection.typescript && !selection.skill) return toast("請至少選擇一種成果格式。", true);
+  if (!selection.portableWorkflow && !selection.typescript && !selection.skill && !selection.pythonPlaywright && !selection.pythonSelenium) return toast("請至少選擇一種成果格式。", true);
   try {
     const response = await fetch(`/api/studio/projects/${encodeURIComponent(state.project.id)}/export`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(selection) });
     if (!response.ok) throw new Error((await response.json()).error?.message ?? "成果產生失敗");

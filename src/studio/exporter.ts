@@ -8,9 +8,11 @@ export class ExportService {
   private readonly exportDir = path.resolve("./exports");
 
   async create(project: WorkflowProject, selection: ExportSelection): Promise<{ filePath: string; fileName: string }> {
-    if (!selection.portableWorkflow && !selection.typescript && !selection.skill) {
+    if (!selection.portableWorkflow && !selection.typescript && !selection.skill && !selection.pythonPlaywright && !selection.pythonSelenium) {
       throw new Error("請至少選擇一種成果格式。");
     }
+    if (selection.pythonPlaywright) validatePythonCompatibility(project, "playwright");
+    if (selection.pythonSelenium) validatePythonCompatibility(project, "selenium");
     await fs.mkdir(this.exportDir, { recursive: true });
     const safeProject = removeSensitiveDefaults(project);
     const entries: ZipEntry[] = [];
@@ -18,12 +20,14 @@ export class ExportService {
     if (selection.portableWorkflow) entries.push(...portableEntries(safeProject, selection));
     if (selection.typescript) entries.push(...await typescriptEntries(safeProject, selection));
     if (selection.skill) entries.push(...skillEntries(safeProject, selection));
+    if (selection.pythonPlaywright) entries.push(...await pythonEntries(safeProject, selection, "playwright"));
+    if (selection.pythonSelenium) entries.push(...await pythonEntries(safeProject, selection, "selenium"));
 
     entries.push({
       name: "EXPORT-MANIFEST.json",
       data: json({
         product: "Automation Studio",
-        productVersion: "2.2.4",
+        productVersion: "2.4.1",
         exportedAt: new Date().toISOString(),
         projectId: project.id,
         projectVersion: project.version,
@@ -96,6 +100,138 @@ async function typescriptEntries(project: WorkflowProject, selection: ExportSele
   if (selection.includeExamples) entries.push({ name: `${base}/parameters.example.json`, data: json(exampleParameters(project)) });
   if (selection.includeTests) entries.push({ name: `${base}/tests/structure.test.ts`, data: generatedTest() });
   return entries;
+}
+
+
+/** Conservative export-time validation: never generate a runner that silently skips steps. */
+export function validatePythonCompatibility(project: WorkflowProject, backend: "playwright" | "selenium"): void {
+  const problems: string[] = [];
+  const supported = new Set(["navigate", "newTab", "switchTab", "click", "dblclick", "fill", "select", "upload", "press", "hover", "check", "uncheck", "wait", "assert", "manual", "screenshot", "savePagePdf", "download", "condition", "loop", "extractText", "extractPattern", "captureListSnapshot", "extractWebData", "saveDocument", "waitNewFirst", "waitNewListItem", "script", "clipboard"]);
+  // Stealth is browser configuration, not a workflow action. Python uses standard Chrome; see export README.
+  if (project.browser.authStateEnabled === true && (!project.browser.authVerifyUrl || !project.browser.authSuccessSelector)) problems.push("請先完成登入檢查網址與登入成功 CSS 設定。");
+  const visit = (steps: WorkflowProject["steps"]): void => {
+    for (const step of steps) {
+      if (step.enabled === false) continue;
+      if (!supported.has(step.kind)) problems.push(`${step.name}：尚不支援 ${step.kind}，請改用 TypeScript。`);
+      if (step.periodicRefresh && (!Number.isInteger(step.refreshIntervalSeconds ?? 10) || (step.refreshIntervalSeconds ?? 10) < 5 || (step.refreshIntervalSeconds ?? 10) > 600)) problems.push(`${step.name}：定期重新整理間隔須為 5～600 秒。`);
+      if (step.kind === "script" && /(?<![\w.])(?:require\s*\(|process\.|Buffer\.|__dirname\b|import\s*\(|fs\.|child_process\b)/.test(step.script ?? String(step.value ?? ""))) problems.push(`${step.name}：使用 Node.js 主機端 API 的腳本無法在網頁 JavaScript 執行環境中執行。`);
+      // Selenium supports standard CSS (including Chrome's native :has()) plus
+      // Playwright :has-text(), :text(), :text-is(), :text-matches(), :visible.
+      // The same browser-side resolver handles element actions and web data fields.
+      // Unsupported nested syntax fails explicitly at runtime, never silently skips.
+      visit(step.thenSteps ?? []);
+      visit(step.elseSteps ?? []);
+      visit(step.steps ?? []);
+    }
+  };
+  visit(project.steps);
+  if (problems.length) throw new Error(`Python ${backend} 匯出前相容性檢查未通過：\n${problems.slice(0, 12).join("\n")}${problems.length > 12 ? `\n…另有 ${problems.length - 12} 項` : ""}`);
+}
+
+/** Export a source-only Python project. Neither Python nor Chrome is copied into this ZIP.
+ * Browser profiles, encrypted auth vaults, cookies, tokens and local secrets never leave the machine.
+ * Both backends use the same Python workflow semantics with fail-closed validation.
+ */
+async function pythonEntries(project: WorkflowProject, selection: ExportSelection, backend: "playwright" | "selenium"): Promise<ZipEntry[]> {
+  const base = backend === "playwright" ? "python-playwright-project" : "python-selenium-project";
+  const sourceDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "python-runtime");
+  const runtime = await fs.readFile(path.join(sourceDir, "runner.py"), "utf8");
+  const engine = await fs.readFile(path.join(sourceDir, "engine.py"), "utf8");
+  const cdpBootstrap = await fs.readFile(path.join(sourceDir, "cdp_bootstrap.py"), "utf8");
+  const dependencyBootstrap = await fs.readFile(path.join(sourceDir, "dependency_bootstrap.py"), "utf8");
+  const formats = new Set<string>();
+  const inspect = (steps: WorkflowProject["steps"]): void => {
+    for (const step of steps) {
+      if (step.enabled !== false && step.kind === "saveDocument") formats.add(step.documentFormat ?? "docx");
+      inspect(step.thenSteps ?? []); inspect(step.elseSteps ?? []); inspect(step.steps ?? []);
+    }
+  };
+  inspect(project.steps);
+  const dependencies = backend === "playwright" ? ["playwright>=1.60,<2"] : ["selenium>=4.30,<5"];
+  if (formats.has("xlsx")) dependencies.push("openpyxl>=3.1,<4");
+  if (formats.has("docx")) dependencies.push("python-docx>=1.1,<2");
+  const pyRequirements = dependencies.join("\n") + "\n";
+  const bat = pythonRunBat();
+  const entries: ZipEntry[] = [
+    { name: `${base}/workflow.json`, data: json(project) },
+    { name: `${base}/runner.py`, data: runtime.replace('BACKEND = \'__BACKEND__\'', `BACKEND = \'${backend}\'`) },
+    { name: `${base}/engine.py`, data: engine },
+    { name: `${base}/selector_compat.js`, data: await fs.readFile(path.join(sourceDir, "selector_compat.js"), "utf8") },
+    { name: `${base}/locator_compat.js`, data: await fs.readFile(path.join(sourceDir, "locator_compat.js"), "utf8") },
+    { name: `${base}/option_compat.js`, data: await fs.readFile(path.join(sourceDir, "option_compat.js"), "utf8") },
+    { name: `${base}/cdp_bootstrap.py`, data: cdpBootstrap },
+    { name: `${base}/dependency_bootstrap.py`, data: dependencyBootstrap },
+    { name: `${base}/launch-python.bat`, data: pythonLaunchBat() },
+    { name: `${base}/run-cdp.bat`, data: cdpBat() },
+    { name: `${base}/requirements.txt`, data: pyRequirements },
+    { name: `${base}/requirements-optional.txt`, data: "openpyxl>=3.1,<4\npython-docx>=1.1,<2\n" },
+    { name: `${base}/run.bat`, data: bat },
+    { name: `${base}/check.bat`, data: "@echo off\r\ncd /d \"%~dp0\"\r\ncall \"%~dp0launch-python.bat\" runner.py --check-only\r\nif errorlevel 1 pause\r\n" },
+    { name: `${base}/README.md`, data: pythonReadme(project, backend) },
+    { name: `${base}/.local/README.md`, data: "Profiles and sessions are created locally at runtime. Never distribute .local, parameters.json, cookies or credentials.\n" }
+  ];
+  if (selection.includeExamples) entries.push({ name: `${base}/parameters.example.json`, data: json(exampleParameters(project)) });
+  if (selection.includeTests) entries.push({ name: `${base}/tests/README.md`, data: "First run: python runner.py --check-only\nThen test in visible Chrome with an authorized account and test data.\nDo not replay submitted forms blindly.\n" });
+  return entries;
+}
+
+function pythonLaunchBat(): string {
+  // CMD branches are labels so exit codes are evaluated AFTER Python finishes.
+  // Each runner calls the same dependency bootstrap, using its selected Python.
+  return [
+    "@echo off", "setlocal", 'cd /d "%~dp0"',
+    'python -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul',
+    'if not errorlevel 1 goto use_python',
+    'py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul',
+    'if not errorlevel 1 goto use_py',
+    'echo [ERROR] Python 3.10 or newer was not found. Install Python and rerun.',
+    'exit /b 1',
+    ':use_python',
+    'python "%~dp0dependency_bootstrap.py" %*',
+    'exit /b %errorlevel%',
+    ':use_py',
+    'py -3 "%~dp0dependency_bootstrap.py" %*',
+    'exit /b %errorlevel%',
+    ""
+  ].join("\r\n");
+}
+
+function pythonRunBat(): string {
+  return [
+    "@echo off", "setlocal", 'cd /d "%~dp0"',
+    'call "%~dp0launch-python.bat" runner.py %*',
+    'set "RESULT=%errorlevel%"',
+    'if not "%RESULT%"=="0" (',
+    '  echo [ERROR] Python workflow failed with exit code %RESULT%.',
+    '  pause',
+    ')',
+    'exit /b %RESULT%',
+    ""
+  ].join("\r\n");
+}
+
+function cdpBat(): string {
+  return [
+    "@echo off", "setlocal", 'cd /d "%~dp0"',
+    'call "%~dp0launch-python.bat" cdp_bootstrap.py %*',
+    'set "RESULT=%errorlevel%"',
+    'if not "%RESULT%"=="0" (',
+    '  echo [ERROR] CDP workflow failed with exit code %RESULT%.',
+    '  pause',
+    ')',
+    'exit /b %RESULT%',
+    ""
+  ].join("\r\n");
+}
+
+function pythonReadme(project: WorkflowProject, backend: "playwright" | "selenium"): string {
+  const driver = backend === "selenium" ? `\nChromeDriver matching the installed Chrome is needed. Set CHROMEDRIVER_PATH to its local executable path to avoid Selenium Manager downloads.\nThis backend runs without a Node.js executable.\n` : `\nPlaywright Python does not need Node.js installed separately, but ships a Node-based driver. It MUST be permitted by corporate execution policy.\n`;
+  return `# ${project.name} - Python ${backend} export\n\nThis ZIP contains source files only. It DOES NOT bundle Python, Chrome, browser drivers or credentials.\n\n## Prerequisites (Windows 64-bit)\n\n- Python 3.10+ and installed Google Chrome.\n- Double-click \`run.bat\` or \`run-cdp.bat\` to check dependencies automatically. Missing packages are installed into a private \`.local/python-env\` virtual environment, while existing compatible packages are reused.
+- Approved offline wheels in a \`wheelhouse/\` directory are tried first; if incomplete, pip uses its configured HTTPS index. Set \`AUTOMATION_STUDIO_OFFLINE_ONLY=1\` to forbid network access or \`AUTOMATION_STUDIO_AUTO_INSTALL=0\` to disable setup.
+- For corporate CA/proxy configure \`PIP_CERT\` / \`PIP_INDEX_URL\` (TLS verification remains enabled). Word/Excel requirements are included automatically when the workflow needs them.\n${driver}\n## Run\n\n1. Copy parameters.example.json to parameters.json and supply your values (not included in ZIP).\n2. \`run.bat --check-only\` validates the workflow without installing packages or starting Chrome.
+3. Double-click \`run.bat\` for automatic setup and execution. Running \`python runner.py\` directly skips setup.\n4. Double-click \`run-cdp.bat\` for **one-click CDP login and execution**: use/reuse a dedicated local Chrome profile, confirm DevTools connection, complete manual login when needed, then run Python. No workflow.json edits. If a login-success check is configured it runs automatically; otherwise press Enter after signing in. Run \`run-cdp.bat --check-only\` to validate without Chrome.\n5. All authentication is confirmed on the target website; if expired, complete manual login/Cloudflare/MFA in a VISIBLE browser. No bypass is attempted.\n\n## Important compatibility and security\n\n- The exported runner implements all 29 defined action kinds, including browser-side scripts, clipboard, list comparison, frame targeting, periodic refresh and direct downloads. Some advanced website-specific behavior may still differ; run an end-to-end test.
+- Stealth plugin is NOT transferred to Python. Python launches standard Chrome or joins an authorized local CDP browser; complete any human security challenge normally.
+- Scripts execute in the browser JavaScript context, not in Node.js. Node-only filesystem, require(), Buffer or other host APIs are not supported; write data to the DOM and use built-in saveDocument for export.\n- Selenium supports Playwright :has-text(), :text(), :text-is(), :text-matches(), :visible alongside native Chrome CSS :has() using a bundled browser-side selector resolver. Unsupported advanced nesting fails explicitly instead of targeting an incorrect element.\n- No encrypted v2.2.4 Node.js auth vault or its in-process unlock cache is exported or decrypted. Python has its own local persistent Chrome profile; for existing login use an explicitly authorized local CDP browser.\n- Never open the SAME persistent profile concurrently in multiple programs. Concurrent workers need separate profiles or coordinated tab access.\n- CDP must be at localhost and enabled by the user. \`run-cdp.bat\` opens **a dedicated** Chrome profile with local debugging enabled; \`run.bat\` continues to use the original workflow browser mode. \`run-cdp.bat\` never opens ports on other interfaces or imports the Node.js authentication vault.\n- Authorization checking uses the project authVerifyUrl and authSuccessSelector. If either is missing, --check-only rejects an auth-enabled project.\n- Profiles are stored in .local/profiles; downloads/ and output/ are created on first use. They may contain personal data: do not share them.\n- For a site that redirects to another domain, add its exact host to allowedDomains in Automation Studio before exporting.\n- Check-only validates schema compatibility, not the actual website behavior. Confirm custom browser scripts and site-specific component selectors interact correctly before production use.\n\nThis lightweight ZIP normally has a size in KB. Installed Python packages are stored under \`.local/python-env\`, not included in the exported ZIP. TLS certificate verification is NOT disabled; for corporate proxies configure pip's CA/index or use an approved wheelhouse.\n`;
 }
 
 function skillEntries(project: WorkflowProject, selection: ExportSelection): ZipEntry[] {

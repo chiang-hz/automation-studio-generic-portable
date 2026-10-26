@@ -1134,15 +1134,15 @@ test("v1.0.40 publish autosave, empty batch state, debug tabs and layout refinem
 });
 
 
-test("Automation Studio product metadata is v2.2.4 and the classic interface is removed", async () => {
-  assert.equal((await fs.readFile(path.resolve("VERSION"), "utf8")).trim(), "2.2.4");
+test("Automation Studio product metadata is v2.4.1 and the classic interface is removed", async () => {
+  assert.equal((await fs.readFile(path.resolve("VERSION"), "utf8")).trim(), "2.4.1");
   const pkg = JSON.parse(await fs.readFile(path.resolve("package.json"), "utf8"));
   const router = await fs.readFile(path.resolve("src/studio/router.ts"), "utf8");
   const exporter = await fs.readFile(path.resolve("src/studio/exporter.ts"), "utf8");
-  assert.equal(pkg.version, "2.2.4");
+  assert.equal(pkg.version, "2.4.1");
   assert.match(pkg.version, /^\d+\.[0-9]\.[0-9]$/);
-  assert.match(router, /version: "2\.2\.4"/);
-  assert.match(exporter, /productVersion: "2\.2\.4"/);
+  assert.match(router, /version: "2\.4\.1"/);
+  assert.match(exporter, /productVersion: "2\.4\.1"/);
   const versioning = await fs.readFile(path.resolve("VERSIONING.md"), "utf8");
   assert.match(versioning, /MAJOR\.MINOR\.PATCH/);
   const modernUi = await fs.readFile(path.resolve("frontend/src/main.tsx"), "utf8");

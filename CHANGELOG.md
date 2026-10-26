@@ -1,3 +1,109 @@
+## v2.4.1 - Python browser download isolation and artifact verification
+
+- Selenium no longer redirects Chrome's browser-wide downloads to the official `downloads/` folder during startup. Only an explicit download action sets a unique `.local/download-staging/capture-*` directory; the browser default is restored in `finally`, including click failures and timeouts.
+- Completed files are checked for Chrome CRX component signatures (including CRX files disguised as `downloads.htm`), Office/PDF type mismatches, and HTML login/error pages when an Excel/PDF document was requested. Only validated action-window captures are promoted to `downloads/`.
+- Suspicious or unrelated files remain in `.local/download-staging/` with `[DOWNLOAD-QUARANTINE]` and diagnostic messages; no silently deleting Chrome model files. Files created outside explicit download steps no longer get redirected into project `downloads/` by the exported Python runtime.
+- Python Playwright `expect_download` and authenticated direct HTTP downloads also validate file identity before saving to the final folder. Preserve original name extension logic, collision numbering, profile/CDP login and dependency bootstrap.
+- Selenium file monitoring is a bounded per-action capture, not proof of a CDP download-event identity. A legitimate unrelated download started during the same capture window with an indistinguishable format remains a residual attribution risk; do not claim full event-source attribution.
+- Added tests for CRX + valid XLSX simultaneously, bad HTML, default routing restoration, source format checks and Playwright event-backed downloads.
+
+## v2.4.0 - Python Download Extension Preservation
+
+- Python Selenium and Playwright downloads now preserve server/browser file extensions when a custom name has no extension.
+- Direct HTTP downloads read Content-Disposition (including UTF-8 filename*) and Content-Type instead of guessing from a dynamic .ashx / .php URL.
+- When file names and headers lack extensions, detect specific file magic signatures and inspect Office ZIP members (XLSX/DOCX/PPTX) before naming; otherwise report [DOWNLOAD-WARN] and keep the extensionless name rather than guessing.
+- Existing explicit custom extensions stay unchanged. Collisions use numbered names rather than overwriting a previous file.
+- Applies to newly exported Python engines and a drop-in engine.py repair; unrelated selectors, CDP, and dependency bootstrap are unchanged.
+- Regression tests cover download naming for both Python backends and all download methods.
+
+## v2.3.9 — Selenium Fixed Header Click / Download Repair
+
+- Selenium `click` 與瀏覽器下載均在點擊前將元素置中，避免固定導覽列遮擋。
+- 只在 ChromeDriver 回報真正的 `ElementClickInterceptedException` 時嘗試短暫重捲，仍遮擋則停止；不使用 JavaScript 強制點擊。
+- 同步用於 check/uncheck，保留 CDP、Managed Browser、原 TypeScript 與 Playwright 功能。
+
+## v2.3.8 - Selenium active dropdown popup disambiguation
+
+- 修正 v2.3.7 已轉換成精確 `role=option` 但仍偵測到 2 個同名選項的問題；Python Selenium 會記錄上一步真正點擊的 combobox，優先使用其 `aria-controls` / `aria-owns` 限定作用中的清單。
+- 改善 Selenium 的 `role` 查找：忽略 ARIA 隱藏、inert、hidden 區域內的選項，貼近 Playwright 的 accessible role 語意。
+- 當 ARIA 關聯無法區分重複選項時，利用瀏覽器命中測試僅選擇唯一可由滑鼠命中的候選項；若仍非唯一則安全停止並列出候選項的 popup、狀態與位置。
+- 修正適用於所有新版 Selenium Python 匯出專案，**不會**自動修改既有 workflow.json，原來的 run-cdp.bat、登入復原、依賴安裝與 TS/Playwright 匯出保持不變。
+- 新增真實離線 Chromium 回歸案例：兩個同名選項位於不同選單、ARIA 不可存取項目、重疊選項，以及同一有效選單真的重複（應拒絕）。未在使用者實際網站完成端到端驗收。
+
+## v2.3.7 - Selenium dropdown semantic locator repair
+
+- When recorded dropdown selectors include a broad CSS `[role="option"]` plus exactly one `text` rule with `exact: true`, the Selenium Python runtime combines them into `role=option` and the exact accessible name. This prevents two visible options or duplicated outer/inner text from triggering false ambiguity.
+- Explicit `role=option` / exact-name locators take precedence and never degrade to broad fallback selectors that might click another option if the named target disappears.
+- Preserve explicit `matchMode: first|last|nth` semantics, and preserve normal behavior for unrelated selectors without exact option evidence.
+- Keep `unique` fail-closed behavior if multiple genuinely identical options exist. No automatic first-item selection and no changes to the original TypeScript executor or stored user workflows.
+- New Chromium-backed regression tests include the recorded `決算報表` / `中央銀行` / `損益表` selector patterns, nested/duplicated labels and true duplicate options.
+- Existing Python exports can be patched by replacing only `engine.py`; new Selenium exports include the fix automatically. Site-specific validation is still required.
+
+## v2.3.6 - Selenium invalid selector / Playwright shorthand repair
+
+- Fix ChromeDriver `invalid selector` in exported Selenium workflows where a CSS-typed locator is actually a Playwright XPath shorthand (`//...`, `xpath=...`, `..`) or a `css=` / `text=` prefixed locator. Selenium now routes XPath to XPath and text queries to the existing browser-side text resolver; CSS prefixes are removed safely.
+- Apply the same locator routing to element interactions, selector-state waits, frame selection, list snapshots and the data extraction frame probe.
+- When every locator fallback fails, show the selector strategy and an abbreviated rejected value rather than only a huge ChromeDriver stacktrace.
+- Preserve unique/visible element checking; never auto-select an arbitrary match or retry submit actions.
+- New regression tests exercise both previously invalid shortcuts and legitimate ambiguity failures.
+- Site-specific selectors cannot be verified without the actual failing `workflow.json` / DOM. This fix is a generic compatibility repair, not a claim that the company website was re-tested.
+
+## v2.3.5 - Python export dependency auto-install
+
+- Python Playwright/Selenium ZIP exports now include `dependency_bootstrap.py` and `launch-python.bat`.
+- `run.bat` and `run-cdp.bat` automatically verify `requirements.txt`, install missing/incompatible Python packages into a local `.local/python-env` virtual environment and then execute the workflow.
+- Installed dependencies are reused on subsequent runs; no administrator privileges, global pip changes or separate Node.js install required for Selenium.
+- Prefer trusted local `wheelhouse/` wheels before normal verified-HTTPS pip index; support offline-only and auto-install opt-out environment flags. Never disable TLS checks.
+- `--check-only` stays offline and does not install packages or open Chrome. Errors about pip, proxy, CA and wheelhouse are explicit.
+- Does not bundle Python/Chrome or modify CDP/Managed Browser authentication behavior. Selenium ChromeDriver availability remains a separate browser-driver prerequisite.
+
+## v2.3.4 - Selenium Python 全動作元件相容強化
+
+- 依 v2.3.3 `StepKind` 定義對齊 29 種動作元件，維持原 TypeScript/Playwright 相容。
+- Selenium 支援 Playwright 擴充 CSS（`:has-text`, `:text`, `:text-is`, `:text-matches`, `:visible`）及 Chrome 原生 `:has`；支援角色、無障礙名稱、標籤與 placeholder 解析。
+- 點擊、等待、清單快照、新增資料監控及資料擷取統一相容定位語意，不強迫使用者手動替換 CSS/XPath。
+- 強化 Selenium iframe 搜尋、登入 CDP 工作階段下載位置、資料擷取等待及錯誤回報。
+- `attached` / `hidden` / `visible` 等等待與驗證改為計算真正符合的元素，不再因多個可見按鈕錯誤通過 hidden 判斷。
+- 條件分支與迴圈現在同樣進行步驟後驗證；下載驗證需要已保存的檔案。
+- Python ZIP 根據 `saveDocument` 格式在 `requirements.txt` 自動列出 Word／Excel 套件；新增 `locator_compat.js`。
+- 加入 Chromium 離線頁面驗證及新版 Python／TS 匯出測試。
+- 限制：Stealth 非可攜動作元件，不會移植到 Selenium；Node.js 專用 JavaScript 及網站安全驗證仍須人工處理。沒有在使用者公司網站做完整 E2E。
+
+## v2.3.3 - Python selector visibility and uniqueness parity
+
+- Fixed exported Python Playwright and Selenium locators checking **all DOM matches** for
+  `matchMode=unique`. They now follow the TypeScript engine: consider only visible
+  elements outside responsive/mobile/drawer/offcanvas containers.
+- Apply the same filtered candidate order to first, last and nth; preserve an explicit
+  failure if multiple eligible desktop elements remain.
+- Error messages include the selector strategy and the number of eligible matches.
+- Added Playwright Chromium browser regressions and Selenium locator regression tests.
+- Existing exported Python ZIPs can be patched by replacing their `engine.py` only.
+- If a step legitimately matches two visible desktop buttons, narrow its selectors
+  inside Automation Studio and re-export; do **not** force first/last blindly.
+
+## v2.3.2 — Python CDP 一鍵執行
+
+- Python Playwright / Selenium 匯出 ZIP 新增 `run-cdp.bat` 與 `cdp_bootstrap.py`，整合 Chrome 啟動、CDP 就緒檢查、人工登入與流程執行。
+- Python runner 新增 `--cdp-endpoint`，執行期間覆寫為 CDP，不改寫工作流程 JSON。
+- Chrome 使用專用持續登入 Profile（LocalAppData），連線限制於本機且不匯出 Cookie 或憑證。
+- 未設定登入檢查的流程需人工確認登入完成；既有登入健康檢查則保持原來的自動判斷。
+- Chrome 不可用、埠被占用、無法啟動 DevTools 等情況提供可讀錯誤訊息。
+- v2.3.1 原有 29 種動作元件及 TypeScript 匯出功能不變。
+
+# v2.3.1 — Python 動作元件相容性擴充（2026-10-25）
+
+全面補齊 Python 匯出的 29 種流程動作元件（詳見文末 v2.3.1 說明）。
+
+## v2.3.0 — Python 雙引擎精簡匯出（2026-10-25）
+
+- 發布與版本新增 Python · Playwright 及 Python · Selenium 獨立專案 ZIP 選項；保留全部原匯出格式。
+- Python 共用流程語意執行器、獨立 Managed Browser Profile、同一瀏覽器人工登入復原及 CDP 連線。
+- Python 匯出前相容性檢查、禁止假成功執行尚未支援之 JS / Frame / Stealth / 週期刷新等步驟。
+- 移除重複封裝：Python、Chrome、Selenium/Playwright 與 ChromeDriver 均不包含於流程 ZIP，可由共用環境部署。
+- 新增 PYTHON-EXPORT-README.zh-TW.md 和 Python 匯出測試；不包含登入憑證或瀏覽器資料。
+- 為維持安全，Python 無法直接解密 v2.2.4 Node 加密憑證庫；需持久化專用 Profile 或授權 CDP。
+
 ## v2.2.4 — Managed 登入狀態與人工驗證恢復
 
 - 當已啟用的共用登入狀態無法在管理瀏覽器通過網站驗證時，有頭模式暫停，讓使用者自行完成正常登入或 Cloudflare 安全驗證，返回應用程式按「人工操作完成，繼續執行」後再次驗證。
@@ -1593,3 +1699,11 @@ Target: Automation Studio v1.0.39
 
 此修正不改變 workflow schema、專案匯入格式或既有瀏覽器自動化邏輯。
 
+
+
+## v2.3.1 — Python Action Compatibility
+
+- Extend Python Playwright/Selenium exports to all 27 workflow step kinds (browser-side JavaScript, clipboard, waitNewFirst/waitNewListItem, periodic refresh).
+- Add structured list snapshots, iframe scoping, component actions, direct authenticated HTTP link download, and table/Word/Excel document format alignment.
+- Preserve original TypeScript runner and original Managed Auth. Python profiles remain separate; Stealth plugin is not ported.
+- Fail closed for Node-only scripts and Selenium-only Playwright CSS without valid fallback.

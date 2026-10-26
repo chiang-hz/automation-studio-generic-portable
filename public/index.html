@@ -104,7 +104,7 @@
     <link id="studio-base-styles" rel="stylesheet" href="./styles.css" />
   <!-- MODERN START -->
     <link id="studio-modern-styles" rel="stylesheet" href="/modern/assets/studio.css?v=2.2.0" />
-    <script defer src="/auth-state-panel.js?v=2.2.4"></script>
+    <script defer src="/auth-state-panel.js?v=2.3.5"></script>
     <!-- MODERN END -->
   </head>
   <body>
@@ -504,6 +504,8 @@
               <div class="section-heading"><div><h2>選擇成果</h2><p>可複選；所有成果會合併成一個 ZIP。</p></div></div>
               <label class="export-option"><input id="exportPortable" type="checkbox" checked /><span><b>可攜工作流程</b><small>可匯入本程式繼續編輯與執行</small></span><em>JSON</em></label>
               <label class="export-option"><input id="exportTypescript" type="checkbox" checked /><span><b>TypeScript</b><small>獨立 Playwright 專案與啟動腳本</small></span><em>TS</em></label>
+              <label class="export-option"><input id="exportPythonPlaywright" type="checkbox" /><span><b>Python · Playwright</b><small>使用現有 Chrome · 相容性優先 · 不包含瀏覽器或套件</small></span><em>PY</em></label>
+              <label class="export-option"><input id="exportPythonSelenium" type="checkbox" /><span><b>Python · Selenium</b><small>免 Node.js 驅動 · 輕量版 · 不包含瀏覽器或套件</small></span><em>PY</em></label>
               <label class="export-option"><input id="exportSkill" type="checkbox" checked /><span><b>SKILL.md</b><small>供 Codex／代理程式理解與操作</small></span><em>SKILL</em></label>
               <div class="checkbox-row"><label><input id="includeTests" type="checkbox" checked /> 包含測試案例</label><label><input id="includeExamples" type="checkbox" checked /> 包含範例參數</label></div>
             </section>
@@ -726,7 +728,7 @@
             <aside class="card report-preview-card">
               <div class="section-heading"><div><h2>將自動附帶</h2><p>協助支援人員快速辨識環境，不包含敏感資料。</p></div></div>
               <ul class="report-context-list">
-                <li><b>系統版本</b><span>Automation Studio V2.2.4</span></li>
+                <li><b>系統版本</b><span>Automation Studio V2.3.5</span></li>
                 <li><b>目前專案</b><span id="reportProjectName">—</span></li>
                 <li><b>專案 ID</b><span id="reportProjectId">—</span></li>
                 <li><b>瀏覽器模式</b><span id="reportBrowserMode">—</span></li>
@@ -760,7 +762,7 @@
     <script src="./app.js"></script>
   <!-- MODERN START -->
     <script src="/bridge.js"></script>
-    <script id="studio-modern-script" type="module" src="/modern/studio.js?v=2.2.0-step-selection"></script>
+    <script id="studio-modern-script" type="module" src="/modern/studio.js?v=2.3.5-python-export"></script>
     <!-- MODERN END -->
   </body>
 </html>
