@@ -69,3 +69,42 @@ test('All 29 Automation Studio step kinds are accepted for Playwright Python wit
   project.steps.push({id:'bad',name:'Bad Interval',kind:'waitNewFirst',enabled:true,periodicRefresh:true,refreshIntervalSeconds:1});
   assert.throws(()=>validatePythonCompatibility(project,'playwright'), /5～600/);
 });
+
+test('Python batch export includes launchers and redacts sensitive batch values', async () => {
+  const project = createDefaultProject({name:'python-batch-export',targetUrl:'https://example.com'});
+  project.parameters.push({id:'test-year',name:'year',label:'年度',type:'select',required:true,defaultValue:'114',options:['114','113']});
+  project.parameters.push({id:'test-secret',name:'accessKey',label:'憑證',type:'secret',required:false,sensitive:true,defaultValue:'CONFIDENTIAL-DEFAULT'});
+  project.steps=[{id:'open',name:'open',kind:'navigate',enabled:true,url:'https://example.com'}];
+  const service = new ExportService() as any;
+  const previous = service.exportDir;
+  const temp = await fs.mkdtemp(path.resolve('./exports/batch-test-'));
+  service.exportDir = temp;
+  try {
+    const result = await service.create(project, {portableWorkflow:false,typescript:false,skill:false,
+      pythonSelenium:true,pythonPlaywright:true,includeTests:true,includeExamples:true,
+      pythonBatch:true,pythonBatchIncludeCurrentRows:true,
+      pythonBatchRows:[{enabled:true,parameters:{year:'113',accessKey:'CONFIDENTIAL-ROW'}}]});
+    const buffer = await fs.readFile(result.filePath);
+    for(const backend of ['selenium','playwright']) for(const name of [
+      'batch_runner.py','run-batch.bat','run-batch-cdp.bat','batch-settings.json','batch.json','batch.example.csv']) {
+      assert.ok(buffer.includes(Buffer.from(`python-${backend}-project/${name}`)), `Missing ${backend}/${name}`);
+    }
+    assert.ok(buffer.includes(Buffer.from('"year": "113"')));
+    assert.ok(buffer.includes(Buffer.from('openpyxl>=3.1,<4')));
+    assert.ok(buffer.includes(Buffer.from('\"onError\": \"continue\"')));
+    const stopResult = await service.create(project, {portableWorkflow:false,typescript:false,skill:false,pythonSelenium:true,pythonBatch:true,pythonBatchOnError:'stop'});
+    const stopZip = await fs.readFile(stopResult.filePath);
+    assert.ok(stopZip.includes(Buffer.from('\"onError\": \"stop\"')));
+    assert.ok(!buffer.includes(Buffer.from('CONFIDENTIAL-DEFAULT')));
+    assert.ok(!buffer.includes(Buffer.from('CONFIDENTIAL-ROW')));
+    assert.ok(!buffer.includes(Buffer.from('"pythonBatchRows":')),
+      'Raw batch rows must never be copied into export manifest');
+    const withoutBatch = await service.create(project,{portableWorkflow:false,typescript:false,skill:false,
+      pythonSelenium:true,pythonBatch:false,includeTests:false,includeExamples:false});
+    const other = await fs.readFile(withoutBatch.filePath);
+    assert.ok(!other.includes(Buffer.from('python-selenium-project/batch_runner.py')));
+  } finally {
+    service.exportDir=previous;
+    await fs.rm(temp,{recursive:true,force:true});
+  }
+});

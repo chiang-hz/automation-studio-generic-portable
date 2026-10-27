@@ -55,6 +55,10 @@ export interface ExportSelection {
   typescript: boolean;
   pythonPlaywright?: boolean;
   pythonSelenium?: boolean;
+  pythonBatch?: boolean;
+  pythonBatchOnError?: "continue" | "stop";
+  pythonBatchIncludeCurrentRows?: boolean;
+  pythonBatchRows?: Array<{enabled: boolean; parameters: Record<string, string | boolean>}>;
   skill: boolean;
   includeTests: boolean;
   includeExamples: boolean;

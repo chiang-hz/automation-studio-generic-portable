@@ -1,3 +1,14 @@
+## v2.4.7
+Python 批次失敗策略預設繼續，匯出可切換停止並保存到 batch-settings.json。
+
+## v2.4.6
+
+Fix Schannel revocation lookup failure during pinned Node.js bootstrap (curl error 35).
+
+## v2.4.4
+
+沿用 2.4.3 版本機制，新增 Chrome 自動偵測及非必要 Playwright 瀏覽器下載略過。
+
 # Automation Studio 版本號規則
 
 系統版本採 MAJOR.MINOR.PATCH。自 2.0.0 起，MINOR（第二段）及 PATCH（第三段）限定為 0–9 的個位數，超過 9 時向前進位；MAJOR（第一段）不限制為個位數。
@@ -9,7 +20,7 @@
 
 進位升至新主版本身不代表流程資料不相容。建置時會檢查系統版本格式，禁止第二、第三段超過個位數。
 
-目前正式發行版：2.4.0。
+目前正式發行版：2.4.6。
 
 - MAJOR：主版升級，或第二段超過 9 時的進位。
 - MINOR：新增一組可見功能或完成一個功能里程碑，舊專案原則上可直接使用。
@@ -74,3 +85,5 @@ VERSION、package.json、package-lock.json、Health API、UI 系統版本與匯�
 本次 2.4.0 修正 Python Selenium / Playwright 下載重新命名時遺失副檔名，優先沿用原檔副檔名，必要時使用 HTTP 標頭及檔案特徵辨識；同名下載不覆蓋舊檔，無法可靠判斷時顯示警告。
 
 - v2.4.1: Selenium per-action download staging, background CRX quarantine and download artifact validation; no change to workflow project versions.
+
+- v2.4.2: setup-runtime 依專案磁碟建立暫存目錄，修正 Windows EXDEV；僅 TLS 憑證鏈驗證失敗時使用一次性 HTTPS 例外且維持 SHA-512 / SHA-256 完整性檢查；完成下載即恢復 TLS 驗證。

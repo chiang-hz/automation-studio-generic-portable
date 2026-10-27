@@ -1,3 +1,59 @@
+
+## v2.4.8 — Python 批次失敗策略選項顯示修正
+
+- 修正 v2.4.7 的 `frontend/dist/studio.js` 與 `public/modern/studio.js` 不同步，導致發布與版本頁面缺少「批次任務失敗時」選項。
+- 更新首頁 `/modern/studio.js` 資產版本參數，避免舊瀏覽器快取繼續載入舊功能。
+- `scripts/install-frontend.mjs` 安裝前端時同步複製最新的編譯 JS，防止未來再次發生。
+- 原有 `batch-settings.json` 匯出設定與 `--on-error` 覆寫邏輯維持不變。
+
+## v2.4.7 — Python batch error policy
+
+- Python batch now defaults to continue after failed rows.
+- Export UI allows continue/stop and saves batch-settings.json for Selenium and Playwright.
+- --on-error overrides export-time preference.
+
+## v2.4.6 — Python batch export (JSON / CSV / XLSX)
+
+- Python Selenium / Playwright exports can include `batch_runner.py`, `run-batch.bat`, `run-batch-cdp.bat`, `batch.json`, and CSV example.
+- Support sequential enabled-row runs, stop/continue policy, per-row logs, and JSON/CSV summaries.
+- Accept Automation Studio batch JSON/CSV, plus Excel with column headers matching parameter keys.
+- Export current Batch Grid rows only with explicit opt-in and redact sensitive/secret parameters.
+- CDP batch reuses authorized local Chrome; no parallel access to the same login profile.
+- Batch parameter temp files are cleared after each row; check-only runs offline.
+
+## v2.4.5 - Windows Schannel revocation failure during Node.js bootstrap
+
+- Fix `setup-runtime.bat` stopping immediately with `curl: (35) ... CRYPT_E_NO_REVOCATION_CHECK` when bundled `runtime\node\node.exe` is missing. The previous bootstrap only recognized curl exit 60; Schannel revocation lookup failures can return exit 35.
+- Download Node.js with normal TLS validation first. Only after curl 35, retry with `--ssl-revoke-best-effort` and then, only if still 35, `--ssl-no-revoke`. Both preserve certificate-chain verification. Existing curl 60 fallback remains scoped to the pinned Node.js download.
+- All download paths validate the pinned SHA-256 before the downloaded binary is executed. No global TLS environment bypass; ordinary npm setup starts with certificate verification. Failed downloads report the actual curl exit code.
+- Preserves v2.4.4 Chrome detection, project-local setup temporary directory, EPERM/EXDEV recovery, Python exports and existing project data. Windows enterprise proxy restrictions may still require an approved CA or proxy configuration.
+
+## v2.4.4 - Use existing Chrome; skip unnecessary Playwright browser downloads
+
+- `setup-runtime.bat` now checks for installed Google Chrome **after** installing the Node packages and, when found, skips Playwright browser installation altogether. None of `chromium-*`, `chromium_headless_shell-*`, `ffmpeg-*`, or `winldd-*` is downloaded by the default setup in that case.
+- Browser selection preserves existing workflow settings: a project configured for `bundled` transparently falls back to installed Chrome only when the bundled Chromium is absent. An explicitly selected Chrome still uses Chrome. No Edge fallback or workflow JSON rewrite.
+- Supports Chrome in standard per-user / Program Files locations plus `CHROME_PATH`, `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`, and `CHROMIUM_EXECUTABLE_PATH` overrides.
+- If no local Chrome is found, the installer retains the v2.4.3 bundled-Chromium installation path. To explicitly install bundled Chromium even with Chrome detected, run `setup-runtime.bat --install-bundled-browser`.
+- Existing browser binaries are **not deleted** automatically. Video recording with Playwright is not part of this project's current functionality; bundled Chromium and its tools are only needed when the user chooses that browser or local Chrome cannot be used.
+- Preserves temporary-path staging on the project drive, EPERM/EXDEV recovery, per-download TLS policy and package integrity checks.
+
+## v2.4.3 - Windows EPERM package install recovery
+
+- Fix `EPERM: operation not permitted, rename .../extracted -> .../node_modules/concat-map` on restricted or heavily scanned Windows machines. Retry transient `EPERM`, `EACCES` and `EBUSY` errors with bounded delays, then use safe directory-copy fallback when the target path is absent. `EXDEV` still falls back to copy.
+- If copying is interrupted by a transient lock, clean partial output before retrying; never silently merge files into an already-existing package destination. Verify the package version after installing.
+- Preserve previous package versions when a replacement fails. Clean staging on success, retain recovery backup if restoration fails, and show actionable diagnostics if corporate access controls also prevent copying.
+- Keep v2.4.2 same-volume temporary files, TLS issuer-only fallback, HTTPS restrictions and mandatory SHA-512 package integrity checks; no global TLS bypass.
+- Installed and verified versions are skipped on re-run. No user project/workflow/CDP/Playwright behavior changes. Added Windows lock/retry/copy/rollback regression tests.
+
+## v2.4.2 - Setup Runtime TLS issuer recovery and same-volume staging
+
+- `setup-runtime.bat` uses `.local\setup-temp` beneath the current project directory for `TEMP`, `TMP` and `TMPDIR`. Both node.exe bootstrap and npm-package extraction now keep temporary files on the same drive as the installation destination, eliminating the standard C: -> D: `EXDEV` rename failure.
+- Node package HTTPS transfers first verify certificates. On issuer-chain errors only, retry **that single HTTPS request** with certificate verification disabled, and enforce the original manifest's pinned SHA-512 integrity before unpacking. Subsequent HTTPS requests re-enable certificate verification automatically. Network/HTTP errors do not trigger insecure retries.
+- Playwright Chromium installation similarly starts with normal TLS; on verified issuer-error output only, it retries in a separate one-time subprocess with TLS validation disabled. Parent process and `start.bat` never inherit this exception. Prefer a company-approved `NODE_EXTRA_CA_CERTS` when available.
+- Downloading pinned `node.exe` retains curl's certificate-verified first attempt and a fallback only for curl error 60, with mandatory pinned SHA-256 before execution. The exception is limited to that transfer.
+- `EXDEV` move fallback copies the unpacked directory, cleans the source, and preserves/restores the previous package on installation failures. Added offline tests for TLS recovery/restoration, SHA-512 verification, project-volume staging, `EXDEV`, Chromium fallback and idempotent installs.
+- Preserves Python Selenium/Playwright downloads, CDP, Stealth options, workflows and the app's runtime package manifest; no workflow JSON format change.
+
 ## v2.4.1 - Python browser download isolation and artifact verification
 
 - Selenium no longer redirects Chrome's browser-wide downloads to the official `downloads/` folder during startup. Only an explicit download action sets a unique `.local/download-staging/capture-*` directory; the browser default is restored in `finally`, including click failures and timeouts.

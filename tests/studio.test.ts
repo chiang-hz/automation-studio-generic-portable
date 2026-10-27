@@ -138,6 +138,31 @@ test("隨附 Chromium 不存在時可使用指定的本機瀏覽器", async () =
   }
 });
 
+test("已安裝 Chrome 時，舊專案的 bundled 設定可安全備援本機 Chrome", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "automation-studio-chrome-fallback-"));
+  const chromePath = path.join(temporary, "Google", "Chrome", "Application", "chrome.exe");
+  await fs.mkdir(path.dirname(chromePath), { recursive: true });
+  await fs.writeFile(chromePath, "test-browser");
+  const previous = { chrome: process.env.CHROME_PATH, localAppData: process.env.LOCALAPPDATA, files: process.env.ProgramFiles, x86: process.env["ProgramFiles(x86)"], w6432: process.env.ProgramW6432, executable: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH };
+  process.env.LOCALAPPDATA = temporary;
+  delete process.env.ProgramFiles;
+  delete process.env["ProgramFiles(x86)"];
+  delete process.env.ProgramW6432;
+  delete process.env.CHROME_PATH;
+  delete process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+  try {
+    const resolution = await resolveStudioBrowser({ chromium: { executablePath: () => path.join(temporary,"not-bundled","chrome.exe") } }, "bundled", { detectChrome: async () => chromePath });
+    assert.equal(resolution.executablePath, chromePath);
+    assert.equal(resolution.fallback, true);
+    assert.match(resolution.source, /Google Chrome/);
+  } finally {
+    for (const [key, value] of Object.entries({ CHROME_PATH:previous.chrome, LOCALAPPDATA:previous.localAppData, ProgramFiles:previous.files, "ProgramFiles(x86)":previous.x86, ProgramW6432:previous.w6432, PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:previous.executable })) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    await fs.rm(temporary, { recursive:true, force:true });
+  }
+});
+
 test("未下載隨附 Chromium 時不自動改用受管理的 Edge", async () => {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "automation-studio-edge-"));
   const edgePath = path.join(temporary, "Microsoft", "Edge", "Application", "msedge.exe");
@@ -156,9 +181,9 @@ test("未下載隨附 Chromium 時不自動改用受管理的 Edge", async () =>
   delete process.env["ProgramFiles(x86)"];
   delete process.env.ProgramW6432;
   try {
-    const resolution = await resolveStudioBrowser({ chromium: { executablePath: () => path.join(temporary, "missing", "chrome.exe") } }, "bundled");
+    const resolution = await resolveStudioBrowser({ chromium: { executablePath: () => path.join(temporary, "missing", "chrome.exe") } }, "bundled", { detectChrome: async () => undefined });
     assert.equal(resolution.executablePath, undefined);
-    assert.equal(resolution.source, "找不到專案內可攜 Chromium runtime");
+    assert.equal(resolution.source, "找不到隨附 Chromium 或已安裝的 Google Chrome");
     assert.equal(resolution.available, false);
   } finally {
     if (previous.executable === undefined) delete process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
@@ -1134,15 +1159,15 @@ test("v1.0.40 publish autosave, empty batch state, debug tabs and layout refinem
 });
 
 
-test("Automation Studio product metadata is v2.4.1 and the classic interface is removed", async () => {
-  assert.equal((await fs.readFile(path.resolve("VERSION"), "utf8")).trim(), "2.4.1");
+test("Automation Studio product metadata is v2.4.7 and the classic interface is removed", async () => {
+  assert.equal((await fs.readFile(path.resolve("VERSION"), "utf8")).trim(), "2.4.7");
   const pkg = JSON.parse(await fs.readFile(path.resolve("package.json"), "utf8"));
   const router = await fs.readFile(path.resolve("src/studio/router.ts"), "utf8");
   const exporter = await fs.readFile(path.resolve("src/studio/exporter.ts"), "utf8");
-  assert.equal(pkg.version, "2.4.1");
+  assert.equal(pkg.version, "2.4.7");
   assert.match(pkg.version, /^\d+\.[0-9]\.[0-9]$/);
-  assert.match(router, /version: "2\.4\.1"/);
-  assert.match(exporter, /productVersion: "2\.4\.1"/);
+  assert.match(router, /version: "2\.4\.6"/);
+  assert.match(exporter, /productVersion: "2\.4\.6"/);
   const versioning = await fs.readFile(path.resolve("VERSIONING.md"), "utf8");
   assert.match(versioning, /MAJOR\.MINOR\.PATCH/);
   const modernUi = await fs.readFile(path.resolve("frontend/src/main.tsx"), "utf8");

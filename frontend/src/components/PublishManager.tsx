@@ -5,7 +5,7 @@ import { useStudio } from '../store';
 import { studioApi, type ExportSelection } from '../sdk/restClient';
 import { Button } from './ui/button';
 
-const initialSelection: ExportSelection = { portableWorkflow: true, typescript: true, skill: true, pythonPlaywright: false, pythonSelenium: false, includeTests: true, includeExamples: true };
+const initialSelection: ExportSelection = { portableWorkflow: true, typescript: true, skill: true, pythonPlaywright: false, pythonSelenium: false, pythonBatch: true, pythonBatchOnError: "continue", pythonBatchIncludeCurrentRows: false, includeTests: true, includeExamples: true };
 const checkLabels = ['入口網址格式正確', '允許網域已設定', '流程至少有一個啟用步驟', '密碼、Cookie 與工作站不會匯出'];
 
 export function PublishManager() {
@@ -31,7 +31,12 @@ export function PublishManager() {
       }
       const current = runtimeSdk.snapshot().state.project;
       if (!current) throw new Error('目前沒有開啟的專案。');
-      const blob = await studioApi.exportProject(current.id, selection);
+      const effectiveSelection: ExportSelection = {
+        ...selection,
+        pythonBatchRows: selection.pythonBatchIncludeCurrentRows && (selection.pythonPlaywright || selection.pythonSelenium)
+          ? runtimeSdk.snapshot().state.batchRows.map(row => ({enabled: row.enabled, parameters: row.parameters})) : undefined
+      };
+      const blob = await studioApi.exportProject(current.id, effectiveSelection);
       const href = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = href;
@@ -65,6 +70,12 @@ export function PublishManager() {
           ['pythonSelenium', 'Python · Selenium', '輕量、無 Node.js 執行元件、使用現有 Chrome', 'PY'],
           ['skill', 'SKILL.md', '供 Codex／代理程式理解與操作', 'SKILL']
         ] as const).map(([key, title, detail, badge]) => <label className="export-option" key={key}><input type="checkbox" checked={selection[key]} onChange={event => patchSelection(key, event.target.checked)}/><span><b>{title}</b><small>{detail}</small></span><em>{badge}</em></label>)}
+        {(selection.pythonPlaywright || selection.pythonSelenium) && <div className="checkbox-row" style={{flexDirection:'column', alignItems:'flex-start', gap:8}}>
+          <label><input type="checkbox" checked={selection.pythonBatch !== false} onChange={event => patchSelection('pythonBatch', event.target.checked)}/> 包含 Python 批次工具（JSON／CSV／Excel、run-batch.bat、CDP 批次）</label>
+          {selection.pythonBatch !== false && <label className="field"><span>批次任務失敗時</span><select value={selection.pythonBatchOnError ?? 'continue'} onChange={event => setSelection(current => ({ ...current, pythonBatchOnError: event.target.value as 'continue' | 'stop' }))}><option value="continue">繼續執行下一筆（預設）</option><option value="stop">停止整批任務</option></select></label>}
+          {selection.pythonBatch !== false && <label><input type="checkbox" checked={!!selection.pythonBatchIncludeCurrentRows} onChange={event => patchSelection('pythonBatchIncludeCurrentRows', event.target.checked)}/> 同時帶入目前批次清單（{snapshot.state.batchRows.length} 筆；不包含敏感參數）</label>}
+          <small>預設只匯出範例清單；敏感資料及登入資訊不會寫入 ZIP。CDP 批次固定依序執行。</small>
+        </div>}
         <div className="checkbox-row"><label><input type="checkbox" checked={selection.includeTests} onChange={event => patchSelection('includeTests', event.target.checked)}/> 包含測試案例</label><label><input type="checkbox" checked={selection.includeExamples} onChange={event => patchSelection('includeExamples', event.target.checked)}/> 包含範例參數</label></div>
       </section>
       <section className="card checks-card">

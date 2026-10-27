@@ -17,7 +17,7 @@ REQUIREMENTS = ROOT / 'requirements.txt'
 LOCAL = ROOT / '.local'
 VENV = LOCAL / 'python-env'
 LOCK = LOCAL / 'dependency-install.lock'
-TARGETS = frozenset(('runner.py', 'cdp_bootstrap.py'))
+TARGETS = frozenset(('runner.py', 'cdp_bootstrap.py', 'batch_runner.py'))
 
 # No third-party imports: this script MUST work before Selenium or Playwright exists.
 CHECK_CODE = r'''
@@ -174,13 +174,13 @@ def prepare_python() -> str:
 
 def main(args: list[str]):
     if not args or Path(args[0]).name not in TARGETS or args[0] not in TARGETS:
-        raise RuntimeError('Specify runner.py or cdp_bootstrap.py as the entrypoint.')
+        raise RuntimeError('Specify runner.py, cdp_bootstrap.py or batch_runner.py as the entrypoint.')
     target = ROOT / args[0]
     if not target.is_file():
         raise RuntimeError(f'Exported entrypoint missing: {target.name}')
     # --check-only is a structural validation and needs no browser packages.
     # Intentionally avoid touching the network when only validation is requested.
-    python = sys.executable if '--check-only' in args[1:] else prepare_python()
+    python = sys.executable if '--check-only' in args[1:] or '--dry-run' in args[1:] else prepare_python()
     return subprocess.call([str(python), str(target), *args[1:]], cwd=ROOT)
 
 

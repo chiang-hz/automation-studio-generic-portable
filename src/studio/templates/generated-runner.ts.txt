@@ -36,10 +36,14 @@ const ensurePdfDownloadPreference = async (userDataDir: string): Promise<void> =
   });
 };
 
+const hasBundledChromium = existsSync(baseChromium.executablePath());
+if (workflow.browser.channel === "bundled" && !hasBundledChromium) {
+  console.log("[Browser] Bundled Chromium not present; using installed Google Chrome.");
+}
 const launchOptions: any = {
   headless: workflow.browser.headless,
   slowMo: humanizedPlayback ? Math.max(workflow.browser.slowMoMs, 120) : workflow.browser.slowMoMs,
-  channel: workflow.browser.channel === "bundled" ? undefined : workflow.browser.channel,
+  channel: workflow.browser.channel === "bundled" ? (hasBundledChromium ? undefined : "chrome") : workflow.browser.channel,
   executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined
 };
 const cdpMode = workflow.browser.connectionMode === "cdp";

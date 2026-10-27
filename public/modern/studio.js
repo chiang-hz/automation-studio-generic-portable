@@ -24234,8 +24234,6 @@ var RM = {
 	check: hf,
 	press: jm,
 	upload: zm,
-	extractWebData: nf,
-	saveDocument: zf,
 	extractText: nf,
 	extractPattern: sm,
 	clipboard: kf,
@@ -24258,7 +24256,7 @@ function zM({ kind: e }) {
 	});
 }
 function BM(e) {
-	Z.select(e);
+	Ch.getState().setSheet(!1), Z.select(e);
 }
 function VM(e) {
 	Z.select(e), Ch.getState().setSheet(!0);
@@ -24697,7 +24695,6 @@ function qee() {
 			onNodeClick: (e, t) => {
 				t.type === "step" && BM(t.id);
 			},
-			onPaneClick: () => Ch.getState().setSheet(!1),
 			onNodeDoubleClick: (e, t) => {
 				t.type === "step" && VM(t.id);
 			},
@@ -24792,10 +24789,6 @@ function Jee() {
 		})]
 	}), e.state.project ? t === "canvas" ? /* @__PURE__ */ (0, Y.jsx)(qee, {}) : /* @__PURE__ */ (0, Y.jsxs)("div", {
 		className: "modern-list",
-		onClick: (e) => {
-			let t = e.target;
-			if (t instanceof Element && !t.closest('[data-modern-step],.modern-branches,.modern-loop,.insert-slot,button,a,input,select,textarea,[role="dialog"]')) Ch.getState().setSheet(!1);
-		},
 		children: [
 			/* @__PURE__ */ (0, Y.jsx)("div", {
 				className: "workflow-boundary",
@@ -29904,6 +29897,9 @@ var jI = {
 	skill: !0,
 	pythonPlaywright: !1,
 	pythonSelenium: !1,
+	pythonBatch: !0,
+	pythonBatchOnError: "continue",
+	pythonBatchIncludeCurrentRows: !1,
 	includeTests: !0,
 	includeExamples: !0
 }, MI = [
@@ -29945,7 +29941,7 @@ function NI() {
 			if (Z.snapshot().state.dirty && (await Z.save(), Z.snapshot().state.dirty)) throw Error("專案尚未成功儲存，請先處理儲存狀態再匯出。");
 			let e = Z.snapshot().state.project;
 			if (!e) throw Error("目前沒有開啟的專案。");
-			let n = await xI.exportProject(e.id, t), r = URL.createObjectURL(n), i = document.createElement("a");
+			let n = await xI.exportProject(e.id, { ...t, pythonBatchRows: t.pythonBatchIncludeCurrentRows && (t.pythonPlaywright || t.pythonSelenium) ? Z.snapshot().state.batchRows.map((e) => ({enabled: e.enabled, parameters: e.parameters})) : void 0 }), r = URL.createObjectURL(n), i = document.createElement("a");
 			i.href = r, i.download = `${e.id}-${e.version || "1.0.0"}-export.zip`, document.body.append(i), i.click(), i.remove(), window.setTimeout(() => URL.revokeObjectURL(r), 1e3), Z.toast("成果 ZIP 已產生並開始下載");
 		} catch (e) {
 			let t = e instanceof Error ? e.message : "成果產生失敗。";
@@ -30063,6 +30059,22 @@ function NI() {
 								/* @__PURE__ */ (0, Y.jsx)("em", { children: i })
 							]
 						}, e)),
+						(t.pythonPlaywright || t.pythonSelenium) && /* @__PURE__ */ (0, Y.jsxs)("div", {
+							className: "checkbox-row",
+							style: { flexDirection: "column", alignItems: "flex-start", gap: 8 },
+							children: [
+								/* @__PURE__ */ (0, Y.jsxs)("label", { children: [/* @__PURE__ */ (0, Y.jsx)("input", {
+									type: "checkbox", checked: t.pythonBatch !== !1,
+									onChange: (e) => l("pythonBatch", e.target.checked)
+								}), " 包含 Python 批次工具（JSON／CSV／Excel、CDP 批次）"] }),
+								t.pythonBatch !== !1 && /* @__PURE__ */ (0, Y.jsxs)("label", { className: "field", children: [/* @__PURE__ */ (0, Y.jsx)("span", {children: "批次任務失敗時"}), /* @__PURE__ */ (0, Y.jsxs)("select", { value: t.pythonBatchOnError ?? "continue", onChange: (e) => n((s) => ({...s, pythonBatchOnError: e.target.value})), children: [/* @__PURE__ */ (0, Y.jsx)("option", {value: "continue", children: "繼續執行下一筆（預設）"}), /* @__PURE__ */ (0, Y.jsx)("option", {value: "stop", children: "停止整批任務"})] })] }),
+								t.pythonBatch !== !1 && /* @__PURE__ */ (0, Y.jsxs)("label", { children: [/* @__PURE__ */ (0, Y.jsx)("input", {
+									type: "checkbox", checked: !!t.pythonBatchIncludeCurrentRows,
+									onChange: (e) => l("pythonBatchIncludeCurrentRows", e.target.checked)
+								}), ` 同時帶入目前批次清單（${Z.snapshot().state.batchRows.length} 筆；敏感欄位不匯出）`] }),
+								/* @__PURE__ */ (0, Y.jsx)("small", { children: "未勾選時只包含範例；CDP 批次依序執行，不共用敏感參數。" })
+							]
+						}),
 						/* @__PURE__ */ (0, Y.jsxs)("div", {
 							className: "checkbox-row",
 							children: [/* @__PURE__ */ (0, Y.jsxs)("label", { children: [/* @__PURE__ */ (0, Y.jsx)("input", {
@@ -30738,15 +30750,19 @@ function VI(e) {
 }
 function HI() {
 	let { snapshot: e } = Ch(), t = (0, J.useRef)(null), n = e.state.settings ?? {}, [r, i] = (0, J.useState)(() => {
-		return { ...n };
+		let e = localStorage.getItem("studio-ui-theme");
+		return {
+			...n,
+			theme: e === "light" || e === "dark" ? e : n.theme
+		};
 	}), [a, o] = (0, J.useState)({
 		debug: n.debugCleanupStatus,
 		runs: n.runHistoryCleanupStatus
 	}), [s, c] = (0, J.useState)(null), l = (0, J.useRef)(!1);
 	(0, J.useEffect)(() => VI(t.current), []), (0, J.useEffect)(() => {
 		if (!l.current) {
-			let t = { ...e.state.settings ?? {} };
-			i(t), o({
+			let t = { ...e.state.settings ?? {} }, n = localStorage.getItem("studio-ui-theme");
+			(n === "light" || n === "dark") && (t.theme = n), i(t), o({
 				debug: t.debugCleanupStatus,
 				runs: t.runHistoryCleanupStatus
 			}), Z.syncSettingsDraft(t);
@@ -62423,7 +62439,7 @@ function Tne({ sourceView: e }) {
 						children: "HELP & SUPPORT"
 					}),
 					/* @__PURE__ */ (0, Y.jsx)("h2", { children: "使用說明" }),
-					/* @__PURE__ */ (0, Y.jsx)("p", { children: "流程編輯、資料擷取、Word／JSON／Excel 保存、批次資料與發布的操作指南，已依 2.2.0 版更新。" })
+					/* @__PURE__ */ (0, Y.jsx)("p", { children: "流程編輯、PDF 保存、批次資料與發布的操作指南，已依 2.1.0 版更新。" })
 				] }),
 				/* @__PURE__ */ (0, Y.jsxs)(Q, {
 					variant: "secondary",
@@ -62638,7 +62654,7 @@ function Ene() {
 				/* @__PURE__ */ (0, Y.jsxs)("dl", {
 					className: "report-context",
 					children: [
-						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "系統版本" }), /* @__PURE__ */ (0, Y.jsx)("dd", { children: "Automation Studio V2.2.0" })] }),
+						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "系統版本" }), /* @__PURE__ */ (0, Y.jsx)("dd", { children: "Automation Studio V2.1.0" })] }),
 						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "目前專案" }), /* @__PURE__ */ (0, Y.jsx)("dd", { children: o?.name ?? "尚未開啟專案" })] }),
 						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "專案 ID" }), /* @__PURE__ */ (0, Y.jsx)("dd", {
 							className: "mono",
@@ -63378,7 +63394,8 @@ function wre() {
 	let { snapshot: e, setCommand: t } = Ch(), [n, r] = (0, J.useState)(() => localStorage.getItem("studio-sidebar-collapsed") === "true"), [i, a] = (0, J.useState)([]), [o, s] = (0, J.useState)(() => localStorage.getItem("studio-palette-collapsed-v2") !== "false"), [c, l] = (0, J.useState)(!1), [u, d] = (0, J.useState)("");
 	return (0, J.useLayoutEffect)(() => {
 		document.documentElement.classList.add("modern-active"), document.documentElement.classList.add("react-dashboard-active"), document.documentElement.classList.add("react-parameters-active"), document.documentElement.classList.add("react-publish-active"), document.documentElement.classList.add("react-workstation-active", "react-settings-active", "react-report-active", "react-developer-active");
-		Ch.getState().refresh(), window.studioStartup?.complete("ui");
+		let e = localStorage.getItem("studio-ui-theme");
+		(e === "light" || e === "dark") && Z.setTheme(e), Ch.getState().refresh(), window.studioStartup?.complete("ui");
 	}, []), (0, J.useEffect)(() => {
 		document.documentElement.classList.toggle("sidebar-collapsed", n), localStorage.setItem("studio-sidebar-collapsed", String(n));
 	}, [n]), (0, J.useEffect)(() => {
@@ -63480,18 +63497,7 @@ function wre() {
 				variant: "ghost",
 				title: "切換深淺色",
 				"aria-label": "切換深淺色",
-				onClick: async () => {
-                    const previous = e.state.settings?.theme ?? "system";
-                    const next = e.theme === "dark" ? "light" : "dark";
-                    Z.setTheme(next);
-                    try {
-                        const result = await xI.updateSettings({ ...e.state.settings ?? {}, theme: next });
-                        Z.adoptSettings(result.settings);
-                    } catch (error) {
-                        Z.setTheme(previous);
-                        Z.toast(`無法儲存介面配色：${error instanceof Error ? error.message : String(error)}`, true);
-                    }
-                },
+				onClick: () => Z.setTheme(e.theme === "dark" ? "light" : "dark"),
 				children: e.theme === "dark" ? /* @__PURE__ */ (0, Y.jsx)(Dm, { size: 16 }) : /* @__PURE__ */ (0, Y.jsx)(kp, { size: 16 })
 			})]
 		}), yre),

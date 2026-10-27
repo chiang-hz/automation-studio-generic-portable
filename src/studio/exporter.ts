@@ -27,11 +27,11 @@ export class ExportService {
       name: "EXPORT-MANIFEST.json",
       data: json({
         product: "Automation Studio",
-        productVersion: "2.4.1",
+        productVersion: "2.4.6",
         exportedAt: new Date().toISOString(),
         projectId: project.id,
         projectVersion: project.version,
-        outputs: selection,
+        outputs: { ...selection, pythonBatchRows: undefined },
         security: "Secrets, cookies and browser session state are excluded."
       })
     });
@@ -150,6 +150,7 @@ async function pythonEntries(project: WorkflowProject, selection: ExportSelectio
   const dependencies = backend === "playwright" ? ["playwright>=1.60,<2"] : ["selenium>=4.30,<5"];
   if (formats.has("xlsx")) dependencies.push("openpyxl>=3.1,<4");
   if (formats.has("docx")) dependencies.push("python-docx>=1.1,<2");
+  if (selection.pythonBatch !== false && !dependencies.some(item => item.startsWith("openpyxl"))) dependencies.push("openpyxl>=3.1,<4");
   const pyRequirements = dependencies.join("\n") + "\n";
   const bat = pythonRunBat();
   const entries: ZipEntry[] = [
@@ -170,9 +171,54 @@ async function pythonEntries(project: WorkflowProject, selection: ExportSelectio
     { name: `${base}/README.md`, data: pythonReadme(project, backend) },
     { name: `${base}/.local/README.md`, data: "Profiles and sessions are created locally at runtime. Never distribute .local, parameters.json, cookies or credentials.\n" }
   ];
+  if (selection.pythonBatch !== false) entries.push(...await pythonBatchEntries(project, selection, base, sourceDir));
   if (selection.includeExamples) entries.push({ name: `${base}/parameters.example.json`, data: json(exampleParameters(project)) });
   if (selection.includeTests) entries.push({ name: `${base}/tests/README.md`, data: "First run: python runner.py --check-only\nThen test in visible Chrome with an authorized account and test data.\nDo not replay submitted forms blindly.\n" });
   return entries;
+}
+
+
+/** Batch rows only enter an exported ZIP following an explicit UI opt-in. */
+function cleanBatchRows(project: WorkflowProject, selection: ExportSelection): Array<{enabled: boolean; parameters: Record<string, unknown>}> {
+  if (!selection.pythonBatchIncludeCurrentRows || !Array.isArray(selection.pythonBatchRows)) return [];
+  if (selection.pythonBatchRows.length > 10000) throw new Error("批次匯出資料最多 10,000 筆。");
+  const safe = project.parameters.filter(p => p.sensitive !== true && p.type !== "secret");
+  return selection.pythonBatchRows.map((row) => ({
+    enabled: row.enabled === true,
+    parameters: Object.fromEntries(safe.map(p => [p.name, row.parameters?.[p.name] ?? ""]))
+  }));
+}
+
+function pythonBatchBat(cdp: boolean): string {
+  return [
+    "@echo off", "setlocal", 'cd /d "%~dp0"',
+    `call "%~dp0launch-python.bat" batch_runner.py ${cdp ? "--cdp " : ""}%*`,
+    'set "RESULT=%errorlevel%"',
+    'if not "%RESULT%"=="0" (',
+    '  echo [ERROR] Python batch failed with exit code %RESULT%.',
+    '  pause',
+    ')',
+    'exit /b %RESULT%', ""
+  ].join("\r\n");
+}
+
+async function pythonBatchEntries(project: WorkflowProject, selection: ExportSelection, base: string, sourceDir: string): Promise<ZipEntry[]> {
+  const safeRows = cleanBatchRows(project, selection);
+  const template = {format: "automation-studio-batch", version: 1,
+    project: {id: project.id, name: project.name},
+    parameters: project.parameters.map(p => ({name: p.name, label: p.label, type: p.type, redacted: !!p.sensitive || p.type === "secret"})),
+    rows: safeRows.length ? safeRows : [{enabled: false, parameters: exampleParameters(project)}]};
+  const keys = project.parameters.filter(p => !p.sensitive && p.type !== "secret").map(p => p.name);
+  const csvExample = `\uFEFF${["__studio_enabled", ...keys].map(v => `"${v.replaceAll('"', '""')}"`).join(",")}\r\n` +
+    ["false", ...keys.map(k => String(exampleParameters(project)[k] ?? ""))].map(v => `"${v.replaceAll('"', '""')}"`).join(",") + "\r\n";
+  return [
+    {name: `${base}/batch-settings.json`, data: json({onError: selection.pythonBatchOnError === "stop" ? "stop" : "continue"})},
+    {name: `${base}/batch_runner.py`, data: await fs.readFile(path.join(sourceDir, "batch_runner.py"), "utf8")},
+    {name: `${base}/run-batch.bat`, data: pythonBatchBat(false)},
+    {name: `${base}/run-batch-cdp.bat`, data: pythonBatchBat(true)},
+    {name: `${base}/batch.json`, data: json(template)},
+    {name: `${base}/batch.example.csv`, data: csvExample}
+  ];
 }
 
 function pythonLaunchBat(): string {
@@ -231,7 +277,8 @@ function pythonReadme(project: WorkflowProject, backend: "playwright" | "seleniu
 - For corporate CA/proxy configure \`PIP_CERT\` / \`PIP_INDEX_URL\` (TLS verification remains enabled). Word/Excel requirements are included automatically when the workflow needs them.\n${driver}\n## Run\n\n1. Copy parameters.example.json to parameters.json and supply your values (not included in ZIP).\n2. \`run.bat --check-only\` validates the workflow without installing packages or starting Chrome.
 3. Double-click \`run.bat\` for automatic setup and execution. Running \`python runner.py\` directly skips setup.\n4. Double-click \`run-cdp.bat\` for **one-click CDP login and execution**: use/reuse a dedicated local Chrome profile, confirm DevTools connection, complete manual login when needed, then run Python. No workflow.json edits. If a login-success check is configured it runs automatically; otherwise press Enter after signing in. Run \`run-cdp.bat --check-only\` to validate without Chrome.\n5. All authentication is confirmed on the target website; if expired, complete manual login/Cloudflare/MFA in a VISIBLE browser. No bypass is attempted.\n\n## Important compatibility and security\n\n- The exported runner implements all 29 defined action kinds, including browser-side scripts, clipboard, list comparison, frame targeting, periodic refresh and direct downloads. Some advanced website-specific behavior may still differ; run an end-to-end test.
 - Stealth plugin is NOT transferred to Python. Python launches standard Chrome or joins an authorized local CDP browser; complete any human security challenge normally.
-- Scripts execute in the browser JavaScript context, not in Node.js. Node-only filesystem, require(), Buffer or other host APIs are not supported; write data to the DOM and use built-in saveDocument for export.\n- Selenium supports Playwright :has-text(), :text(), :text-is(), :text-matches(), :visible alongside native Chrome CSS :has() using a bundled browser-side selector resolver. Unsupported advanced nesting fails explicitly instead of targeting an incorrect element.\n- No encrypted v2.2.4 Node.js auth vault or its in-process unlock cache is exported or decrypted. Python has its own local persistent Chrome profile; for existing login use an explicitly authorized local CDP browser.\n- Never open the SAME persistent profile concurrently in multiple programs. Concurrent workers need separate profiles or coordinated tab access.\n- CDP must be at localhost and enabled by the user. \`run-cdp.bat\` opens **a dedicated** Chrome profile with local debugging enabled; \`run.bat\` continues to use the original workflow browser mode. \`run-cdp.bat\` never opens ports on other interfaces or imports the Node.js authentication vault.\n- Authorization checking uses the project authVerifyUrl and authSuccessSelector. If either is missing, --check-only rejects an auth-enabled project.\n- Profiles are stored in .local/profiles; downloads/ and output/ are created on first use. They may contain personal data: do not share them.\n- For a site that redirects to another domain, add its exact host to allowedDomains in Automation Studio before exporting.\n- Check-only validates schema compatibility, not the actual website behavior. Confirm custom browser scripts and site-specific component selectors interact correctly before production use.\n\nThis lightweight ZIP normally has a size in KB. Installed Python packages are stored under \`.local/python-env\`, not included in the exported ZIP. TLS certificate verification is NOT disabled; for corporate proxies configure pip's CA/index or use an approved wheelhouse.\n`;
+- Scripts execute in the browser JavaScript context, not in Node.js. Node-only filesystem, require(), Buffer or other host APIs are not supported; write data to the DOM and use built-in saveDocument for export.\n- Selenium supports Playwright :has-text(), :text(), :text-is(), :text-matches(), :visible alongside native Chrome CSS :has() using a bundled browser-side selector resolver. Unsupported advanced nesting fails explicitly instead of targeting an incorrect element.\n- No encrypted v2.2.4 Node.js auth vault or its in-process unlock cache is exported or decrypted. Python has its own local persistent Chrome profile; for existing login use an explicitly authorized local CDP browser.\n- Never open the SAME persistent profile concurrently in multiple programs. Concurrent workers need separate profiles or coordinated tab access.\n- CDP must be at localhost and enabled by the user. \`run-cdp.bat\` opens **a dedicated** Chrome profile with local debugging enabled; \`run.bat\` continues to use the original workflow browser mode. \`run-cdp.bat\` never opens ports on other interfaces or imports the Node.js authentication vault.\n- Authorization checking uses the project authVerifyUrl and authSuccessSelector. If either is missing, --check-only rejects an auth-enabled project.\n- Profiles are stored in .local/profiles; downloads/ and output/ are created on first use. They may contain personal data: do not share them.\n- For a site that redirects to another domain, add its exact host to allowedDomains in Automation Studio before exporting.\n- Check-only validates schema compatibility, not the actual website behavior. Confirm custom browser scripts and site-specific component selectors interact correctly before production use.\n\n## Batch execution (JSON / CSV / Excel)\n\n- Edit \`batch.json\` (each row has \`enabled\` and \`parameters\`); or use a CSV with header \`__studio_enabled,${project.parameters.filter(p=>!p.sensitive && p.type!=="secret").map(p=>p.name).join(",")}\`. XLSX uses the same header in row 1, with \`__studio_enabled\` in the first column.\n- \`run-batch.bat --input batch.json\` runs enabled rows **sequentially** in separate browser sessions.\n- \`run-batch-cdp.bat --input batch.json\` uses a **single authorized local Chrome profile**, connecting for each row; never launches concurrent Chrome instances. Login confirmation occurs once unless the website requires it again.\n- \`run-batch-cdp.bat --input batch.xlsx --on-error continue\` continues after errors (default); \`--on-error stop\` is the default.\n- \`run-batch.bat --input batch.example.csv --check-only\` validates without downloading packages or opening Chrome.\n- \`batch-settings.json\` records the export-time failure strategy (continue by default, stop optional). \`--on-error\` overrides it.
+- Summaries and per-row logs are saved under \`.local/batch-runs/\` (not in export ZIP); row parameter files are deleted after each run. Summary files do not contain parameters.\n- \`batch.json\` may optionally contain the current Automation Studio batch rows if explicitly selected during export. **Secret/sensitive parameters are never exported**. Fill them in locally when required.\n- Downloads remain in \`downloads/\`. Include parameter placeholders in filenames to make files distinguishable.\n\nThis lightweight ZIP normally has a size in KB. Installed Python packages are stored under \`.local/python-env\`, not included in the exported ZIP. TLS certificate verification is NOT disabled; for corporate proxies configure pip's CA/index or use an approved wheelhouse.\n`;
 }
 
 function skillEntries(project: WorkflowProject, selection: ExportSelection): ZipEntry[] {
