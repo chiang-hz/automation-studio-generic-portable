@@ -1,3 +1,32 @@
+## V2.5.4 — 登入狀態共用面板
+
+- 登入狀態共用面板預設收折，可手動展開。
+- 修正切換管理瀏覽器／CDP 後開關未同步更新的問題。
+- CDP 模式仍可修改並保存共用登入偏好；只有管理瀏覽器執行時套用保存狀態。
+- 保護尚未保存的勾選狀態，避免週期同步覆蓋。
+
+## 2.5.2 (2026-10-28) — 匯出登入與分頁恢復一致化
+
+- TypeScript 匯出器：CDP 優先沿用既有網站分頁，延遲登入轉址時等待人工完成後恢復原路由，防止重複登入循環。
+- Python 匯出器：同步登入完成後跨分頁恢復與智慧元素等待；Selenium 的點擊→擷取會依指定元素辨識本次新增結果頁；保留非破壞性失敗診斷。
+- Studio 內 CDP 預設分頁選擇：優先沿用指定網站頁面，不任意選取無關的第一分頁。
+- Python CDP 首次啟動不再先導覽受保護頁面，避免與工作流程導覽重複要求登入。
+- 不儲存或輸出認證資訊，驗證碼、Cloudflare、MFA 仍由使用者在授權工作階段內完成。
+
+## v2.5.1 — TypeScript npm path bootstrap repair
+
+- Verify npm candidates before selection, recover from broken npm.cmd resolving to project-local `node_modules/npm`.
+- Reuse valid system/project runtime; download the pinned full Node.js/npm ZIP only when both unavailable.
+
+## v2.5.0 - TypeScript standalone auto-deploy
+
+- Prefers preinstalled Node/npm; otherwise downloads pinned Node.js 24.13.0 Windows x64 ZIP including npm; SHA256 verified before extracting to runtime/node.
+- Installs only missing npm packages, keeps Chromium downloads disabled, uses installed Chrome.
+- Certificate-related retries are scoped to the transfer; project-local TEMP/cache; subsequent runs reuse runtime.
+
+## v2.4.9 — TypeScript exported runtime bootstrap
+- Exported TypeScript start.bat checks npm dependencies, installs missing packages, handles scoped TLS fallback, and uses local Chrome without downloading Chromium.
+
 
 ## v2.4.8 — Python 批次失敗策略選項顯示修正
 
@@ -1763,3 +1792,9 @@ Target: Automation Studio v1.0.39
 - Add structured list snapshots, iframe scoping, component actions, direct authenticated HTTP link download, and table/Word/Excel document format alignment.
 - Preserve original TypeScript runner and original Managed Auth. Python profiles remain separate; Stealth plugin is not ported.
 - Fail closed for Node-only scripts and Selenium-only Playwright CSS without valid fallback.
+
+## V2.5.3 - TypeScript export Node/npm runtime recovery
+- Validate `node.exe --version` and `npm.cmd --version` before choosing installed tools.
+- Prefer npm bundled with verified Node; reject workflow-local `node_modules/npm` as a runtime source.
+- When npm is missing or broken, install pinned official portable Node/npm archive into exported `runtime/node`, verifying SHA256 first.
+- Reuse verified runtime and installed packages on subsequent starts; keep download TLS fallbacks scoped to retry invocations.

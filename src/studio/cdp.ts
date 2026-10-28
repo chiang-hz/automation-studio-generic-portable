@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { BrowserSettings } from "./types.ts";
+import { scoreExistingSiteTab } from "./authNavigation.ts";
 import { ensurePdfDownloadPreference } from "./profile.ts";
 
 type PlaywrightModule = typeof import("playwright");
@@ -96,7 +97,7 @@ export async function launchLocalChromeForCdp(settings: BrowserSettings): Promis
   return { executable, profileDir };
 }
 
-async function rawConnect(playwright: PlaywrightModule, settings: BrowserSettings, timeoutMs?: number): Promise<CdpConnectionResult> {
+async function rawConnect(playwright: PlaywrightModule, settings: BrowserSettings, timeoutMs?: number, preferredUrl?: string): Promise<CdpConnectionResult> {
   const endpoint = validateLocalCdpEndpoint(settings.cdpEndpoint);
   const browser = await playwright.chromium.connectOverCDP(endpoint, { timeout: timeoutMs ?? Math.max(5_000, settings.defaultTimeoutMs) });
   const context = browser.contexts()[0];
@@ -105,18 +106,19 @@ async function rawConnect(playwright: PlaywrightModule, settings: BrowserSetting
     throw new Error("已連線 CDP，但找不到 Chrome 的預設瀏覽器工作階段。");
   }
   const pages = usablePages(context.pages());
-  const page = selectCdpPage(pages, settings);
+  const page = selectCdpPage(pages, settings, preferredUrl);
   const tabs = await describeCdpTabs(pages);
   return { browser, context, page, endpoint, tabs };
 }
 
 export async function connectToCdpBrowser(
   playwright: PlaywrightModule,
-  settings: BrowserSettings
+  settings: BrowserSettings,
+  preferredUrl?: string
 ): Promise<CdpConnectionResult> {
   const endpoint = validateLocalCdpEndpoint(settings.cdpEndpoint);
   try {
-    return await rawConnect(playwright, settings);
+    return await rawConnect(playwright, settings, undefined, preferredUrl);
   } catch (firstError) {
     if (settings.cdpAutoLaunch === false) {
       const detail = firstError instanceof Error ? firstError.message : String(firstError);
@@ -129,7 +131,7 @@ export async function connectToCdpBrowser(
     while (Date.now() < deadline) {
       await delay(500);
       try {
-        const result = await rawConnect(playwright, settings, 2_000);
+        const result = await rawConnect(playwright, settings, 2_000, preferredUrl);
         result.autoLaunched = true;
         return result;
       } catch (error) {
@@ -158,7 +160,7 @@ export async function inspectCdpEndpoint(
   }
 }
 
-export function selectCdpPage(pagesInput: any[], settings: BrowserSettings): any {
+export function selectCdpPage(pagesInput: any[], settings: BrowserSettings, preferredUrl?: string): any {
   const pages = usablePages(pagesInput);
   if (!pages.length) throw new Error("CDP 已連線，但目前 Chrome 沒有可控制的分頁。請先在 Chrome 開啟至少一個網頁。");
   if (settings.cdpInitialPageMode === "url") {
@@ -173,7 +175,12 @@ export function selectCdpPage(pagesInput: any[], settings: BrowserSettings): any
     if (index > pages.length) throw new Error(`Chrome 目前只有 ${pages.length} 個可控制分頁，無法選擇第 ${index} 個。`);
     return pages[index - 1];
   }
-  return pages[0];
+  // "first" means the most suitable existing same-site page when the workflow
+  // provides its target. Do not select an unrelated about:blank/login tab first.
+  const expected = String(preferredUrl || settings.authVerifyUrl || "");
+  const ranked = pages.map((page, index) => ({page, index, score: scoreExistingSiteTab(String(page.url?.() ?? ""), expected)}))
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  return ranked[0]?.page ?? pages[0];
 }
 
 export async function describeCdpTabs(pagesInput: any[]): Promise<CdpTabInfo[]> {

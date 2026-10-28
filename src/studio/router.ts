@@ -63,7 +63,7 @@ export async function createStudioRouter(): Promise<StudioRouter> {
         sendJson(response, 200, {
           ok: true,
           server: "automation-studio",
-          version: "2.4.6",
+          version: "2.5.2",
           baseVersion: "0.2.7",
           runtime: await runtimeStatus(),
           platform: process.platform

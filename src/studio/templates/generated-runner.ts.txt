@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { captureWebData, saveCollectedDocument } from "./webData.ts";
+import { isPotentialLoginUrl, isRequestedUrlAlreadyOpen, scoreExistingSiteTab } from "./authNavigation.ts";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import os from "node:os";
@@ -95,7 +96,24 @@ if (cdpMode) {
     page = pages[index - 1];
     if (!page) throw new Error(`Chrome 目前只有 ${pages.length} 個分頁，無法選擇第 ${index} 個`);
   } else {
-    page = pages[0];
+    // "first" means preferred existing target-site tab, not necessarily index 0.
+    // CDP may contain SSO/login, about:blank, and unrelated older tabs.
+    const expected = String(workflow.browser.authVerifyUrl || workflow.targetUrl || "");
+    const scored = await Promise.all(pages.map(async (candidate: any, index: number) => {
+      let score = 0;
+      try {
+        score = scoreExistingSiteTab(candidate.url(), expected);
+        if (score > 1) {
+          const selector = String(workflow.browser.authSuccessSelector || "").trim();
+          if (selector && await candidate.locator(selector).first().isVisible({ timeout: 800 }).catch(() => false)) score += 40;
+        }
+      } catch {}
+      return { candidate, score, index };
+    }));
+    scored.sort((a, b) => b.score - a.score || a.index - b.index);
+    page = scored[0]?.candidate ?? pages[0];
+    console.log(`[AUTH] Selected existing Chrome tab ${scored[0]?.index ?? 0} / ${pages.length}: ${page.url()}`);
+    if (page.url() === "about:blank") console.log("[AUTH] CDP Chrome uses its own profile: login in this Chrome window, not in ordinary Chrome.");
   }
 } else if (workflow.browser.reuseProfile) {
   const persistentProfileDir = path.resolve("./.auth/workflow-profile");
@@ -115,6 +133,20 @@ if (cdpMode) {
   page = context.pages()[0] ?? await context.newPage();
 }
 page.setDefaultTimeout(workflow.browser.defaultTimeoutMs);
+// Managed authentication is checked without navigating away from an existing authenticated tab.
+const authVerifyUrl = String(workflow.browser.authVerifyUrl || "").trim();
+const authSelector = String(workflow.browser.authSuccessSelector || "").trim();
+const authEnabled = workflow.browser.authStateEnabled === true && !!authVerifyUrl;
+const sameOrigin = (left: string, right: string): boolean => {
+  try { return new URL(left).origin === new URL(right).origin; } catch { return false; }
+};
+const hasAuthenticatedPage = async (): Promise<boolean> => {
+  if (!authEnabled || !authSelector || !sameOrigin(page.url(), authVerifyUrl)) return false;
+  return page.locator(authSelector).first().isVisible({ timeout: 1500 }).catch(() => false);
+};
+const verifiedAuthenticatedPage = await hasAuthenticatedPage();
+if (verifiedAuthenticatedPage) console.log("[AUTH] Authenticated element found in existing tab.");
+else if (authEnabled) console.log("[AUTH] Login selector not found; this alone does NOT trigger a second login page.");
 const namedTabs = new Map<string, any>();
 const safePlayback = workflow.settings.safePlayback !== false;
 const stepDelayMs = Math.max(500, Math.min(10000, Number(workflow.settings.minStepDelayMs ?? 2000)));
@@ -219,37 +251,53 @@ const locate = async (step: any, override?: any[]): Promise<any> => {
   }
   throw new Error(`所有定位方式均失敗：${errors.join("；")}`);
 };
-const waitFor = async (rule: any, autoFrameSearch = false): Promise<void> => {
+// Protected navigation may redirect to /login *after* goto() resolves.
+// Check for that redirect during element waits, instead of blindly timing out.
+const waitFor = async (rule: any, autoFrameSearch = false, resumeTarget = ""): Promise<void> => {
   if (!rule) return;
   autoFrameSearch = autoFrameSearch || rule.autoFrameSearch === true;
-  const timeout = rule.timeoutMs ?? workflow.browser.defaultTimeoutMs;
+  const timeout = Number(rule.timeoutMs ?? workflow.browser.defaultTimeoutMs);
   const expanded = expand(rule.value);
   const value = ["visible", "hidden", "attached"].includes(rule.kind) ? stableCss(expanded) : expanded;
-  if (rule.kind === "timeout") await page.waitForTimeout(rule.timeoutMs ?? Number(value || 1000));
-  else if (rule.kind === "networkIdle") await page.waitForLoadState("networkidle", { timeout });
-  else if (rule.kind === "url") await page.waitForURL(value, { timeout });
-  else if (rule.kind === "visible" || rule.kind === "attached") {
-    if (autoFrameSearch) {
-      const deadline = Date.now() + timeout;
-      let matched = false;
-      while (Date.now() <= deadline && !matched) {
+  if (rule.kind === "timeout") { await page.waitForTimeout(rule.timeoutMs ?? Number(value || 1000)); return; }
+  if (rule.kind === "networkIdle") { await page.waitForLoadState("networkidle", { timeout }); return; }
+  // A target element wait is our best indicator of a delayed website login redirect.
+  const monitorAuth = authEnabled && ["visible", "attached", "url"].includes(rule.kind);
+  let deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (monitorAuth && await loginOrChallengeVisible()) {
+      const resumed = await requestManualAuthentication(`waiting for ${rule.kind}`, resumeTarget);
+      if (resumed) deadline = Date.now() + timeout; // login time is not a locator timeout
+    }
+    const slice = monitorAuth ? Math.min(850, Math.max(50, deadline - Date.now())) : Math.max(50, deadline - Date.now());
+    if (rule.kind === "url") {
+      // Preserve Playwright wildcard matching and regex-like URL semantics.
+      try { await page.waitForURL(value, { timeout: slice }); return; }
+      catch (error) { if (!monitorAuth || !/Timeout/i.test(String(error))) throw error; }
+    } else if (rule.kind === "visible" || rule.kind === "attached") {
+      if (autoFrameSearch) {
         const scopes = [page, ...page.frames().filter((frame: any) => frame !== page.mainFrame?.())];
         for (const scope of scopes) {
           const locator = scope.locator(value);
           const count = await locator.count().catch(() => 0);
-          if (rule.kind === "attached" && count > 0) { matched = true; break; }
+          if (rule.kind === "attached" && count > 0) return;
           if (rule.kind === "visible") {
             for (let index = 0; index < Math.min(count, 100); index += 1) {
-              if (await locator.nth(index).isVisible().catch(() => false)) { matched = true; break; }
+              if (await locator.nth(index).isVisible().catch(() => false)) return;
             }
           }
-          if (matched) break;
         }
-        if (!matched) await page.waitForTimeout(200);
+        await page.waitForTimeout(Math.min(300, slice));
+      } else {
+        try { await page.locator(value).first().waitFor({ state: rule.kind, timeout: slice }); return; }
+        catch (error) { if (!monitorAuth || !/Timeout/i.test(String(error))) throw error; }
       }
-      if (!matched) throw new Error(`等待元素逾時：${value}`);
-    } else await page.locator(value).first().waitFor({ state: rule.kind, timeout });
-  } else await page.locator(value).waitFor({ state: rule.kind, timeout });
+    } else if (rule.kind === "hidden") {
+      await page.locator(value).first().waitFor({ state: "hidden", timeout: slice }); return;
+    } else { return; }
+  }
+  // Log the real page, not only the missing selector, for future diagnosis.
+  throw new Error(`WAIT_TIMEOUT: ${rule.kind} ${value}; current URL: ${page.url()}`);
 };
 const isVerificationPage = async (): Promise<boolean> => {
   if (/captcha|challenge|recaptcha|turnstile/i.test(page.url())) return true;
@@ -258,6 +306,67 @@ const isVerificationPage = async (): Promise<boolean> => {
   const text = await page.locator("body").innerText({ timeout: 2000 }).catch(() => "");
   return /機器人驗證|驗證您是人類|安全驗證|verify you are human|checking your browser/i.test(text);
 };
+// Observe authentication in the SAME CDP Chrome session. Never open an auth-check tab.
+let manualAuthenticationCount = 0;
+const loginOrChallengeVisible = async (): Promise<boolean> => {
+  if (!authEnabled) return false;
+  if (isPotentialLoginUrl(page.url())) return true;
+  if (await page.locator('input[type="password"]:visible').count().catch(() => 0)) return true;
+  return isVerificationPage();
+};
+const requestManualAuthentication = async (source: string, resumeTarget = ""): Promise<boolean> => {
+  if (!(await loginOrChallengeVisible())) return false;
+  await event("authentication_required", { source, url: page.url(), resumeTarget, openTabs: context.pages().length });
+  if (manualAuthenticationCount > 0) {
+    throw new Error(`AUTH_INVALID: 登入後再次返回驗證頁 ${page.url()}；已停止以免重複登入，請檢查 ChromeCDPProfile 的網站 Session/Cookie。`);
+  }
+  if (workflow.browser.headless) throw new Error("AUTH_REQUIRED: 網站需要人工登入；請使用顯示瀏覽器模式。");
+  manualAuthenticationCount += 1;
+  console.log(`[AUTH] ${source}: 網站轉到登入／安全驗證頁 ${new URL(page.url()).origin + new URL(page.url()).pathname}`);
+  console.log("[AUTH] 請在目前的 CDP Chrome 視窗完成登入；程式會自動偵測並繼續，無須按 Enter。最長等待 180 秒。");
+  // Login can finish on the same tab, or on a new tab opened by the site itself.
+  // A selector on the dashboard header is NOT a reliable authentication signal.
+  const originalTabs = new Map(context.pages().map((p: any) => [p, p.url()]));
+  const deadline = Date.now() + 180_000;
+  let stable = 0;
+  while (Date.now() < deadline) {
+    const candidatePages = context.pages().filter((p: any) => !p.isClosed?.());
+    const eligible = candidatePages.filter((p: any) => sameOrigin(p.url(), authVerifyUrl) && !isPotentialLoginUrl(p.url()));
+    const currentIsEligible = eligible.includes(page) && !(await loginOrChallengeVisible());
+    // Only consider tabs opened or navigated *after* sign-in began; a stale
+    // dashboard tab must not be mistaken for a freshly authenticated session.
+    const freshSiblings = eligible.filter((p: any) => p !== page && (!originalTabs.has(p) || originalTabs.get(p) !== p.url()));
+    const sibling = freshSiblings.find((p: any) => resumeTarget && isRequestedUrlAlreadyOpen(p.url(), resumeTarget))
+      ?? freshSiblings.find((p: any) => scoreExistingSiteTab(p.url(), authVerifyUrl) >= 20)
+      ?? freshSiblings[0];
+    const choice = currentIsEligible ? page : sibling;
+    if (choice) {
+      stable++;
+      if (stable >= 3) {
+        if (page !== choice) {
+          page = choice;
+          page.setDefaultTimeout(workflow.browser.defaultTimeoutMs);
+          console.log(`[AUTH] Switching to authenticated CMS tab: ${page.url()}`);
+        }
+        break;
+      }
+    } else stable = 0;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+  }
+  if (stable < 3) throw new Error(`AUTH_TIMEOUT: 等待網站登入完成已逾 180 秒；目前 ${page.url()}。請在 CDP Chrome 而非一般 Chrome 登入。`);
+  console.log(`[AUTH] 登入後目前頁面：${page.url()}`);
+  if (resumeTarget && !isRequestedUrlAlreadyOpen(page.url(), resumeTarget)) {
+    // Exactly ONE recovery navigation to the original protected route.
+    // If the website redirects to /login again, do not create a second login loop.
+    console.log(`[AUTH] 恢復原流程位置：${resumeTarget}`);
+    await event("authentication_resume_navigation", { from: page.url(), to: resumeTarget });
+    await page.goto(resumeTarget, { waitUntil: "domcontentloaded", timeout: workflow.browser.defaultTimeoutMs });
+    if (await loginOrChallengeVisible()) throw new Error(`AUTH_INVALID: 登入後重返 ${resumeTarget} 仍被轉至 ${page.url()}；請確認 CDP 瀏覽器已取得本站登入權限。`);
+  }
+  await event("authentication_resumed", { source, url: page.url(), openTabs: context.pages().length });
+  return true;
+};
+
 const verify = async (step: any): Promise<void> => {
   const rule = step.verification;
   if (!rule || rule.kind === "download") return;
@@ -1027,6 +1136,7 @@ const executeStep = async (step: any): Promise<void> => {
     page.setDefaultTimeout(workflow.browser.defaultTimeoutMs);
     if (url && url !== "about:blank") {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: step.timeoutMs ?? workflow.browser.defaultTimeoutMs });
+      await requestManualAuthentication("newTab navigation");
       if (/^https?:/i.test(page.url())) allowed(page.url());
     }
     if (String(step.tabName || "").trim()) namedTabs.set(String(step.tabName).trim(), page);
@@ -1036,7 +1146,26 @@ const executeStep = async (step: any): Promise<void> => {
   else if (step.kind === "navigate") {
     const url = expand(step.url || step.value || workflow.targetUrl);
     allowed(url);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: step.timeoutMs ?? workflow.browser.defaultTimeoutMs });
+    // Reusing the URL is sufficient. The configured CSS is not a reliable
+    // authentication indicator, so it must not gate this no-reload check.
+    const sameTarget = isRequestedUrlAlreadyOpen(page.url(), url);
+    if (sameTarget) {
+      console.log("[AUTH] Skipping navigation: current tab is already at the requested URL.");
+      await event("navigation_skipped", { stepId: step.id, url });
+    } else {
+      console.log(`[NAV] Opening workflow target: ${url}`);
+      await event("navigation_started", { stepId: step.id, from: page.url(), to: url, openTabs: context.pages().length });
+      try {
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: step.timeoutMs ?? workflow.browser.defaultTimeoutMs });
+      } catch (error) {
+        // A late SSO redirect can cause navigation timeout while the user login page is open.
+        if (!(await loginOrChallengeVisible())) throw error;
+        console.log("[AUTH] Navigation interrupted by website login redirect; continuing with manual authentication.");
+      }
+      console.log(`[NAV] Website landed on: ${page.url()}`);
+      await event("navigation_finished", { stepId: step.id, url: page.url(), openTabs: context.pages().length });
+    }
+    await requestManualAuthentication("workflow navigation", url);
     if (/^https?:/i.test(page.url())) allowed(page.url());
     if (safePlayback) {
       await page.waitForLoadState("load", { timeout: Math.min(step.timeoutMs ?? workflow.browser.defaultTimeoutMs, 10000) }).catch(() => undefined);
@@ -1142,7 +1271,7 @@ const executeStep = async (step: any): Promise<void> => {
   }
   if (!pageClosed()) {
     if (/^https?:/i.test(page.url())) allowed(page.url());
-    if (step.kind !== "wait") await waitFor(step.waitAfter, step.autoFrameSearch === true);
+    if (step.kind !== "wait") await waitFor(step.waitAfter, step.autoFrameSearch === true, step.kind === "navigate" ? expand(step.url || step.value || workflow.targetUrl) : "");
     if (step.kind !== "assert") await verify(step);
   } else if (step.kind !== "download") throw new Error("執行步驟後目標頁面已關閉，無法繼續驗證。");
 };
@@ -1162,8 +1291,9 @@ async function executeSteps(steps: any[]): Promise<void> {
       } catch (error) {
         lastError = error;
         await event("step_failed", { stepId: step.id, attempt, message: error instanceof Error ? error.message : String(error) });
-        const protectedStop = /安全驗證|機器人驗證|HTTP (403|429)|網站負載/i.test(error instanceof Error ? error.message : String(error));
-        if (attempt <= retries && !protectedStop && step.kind !== "manual" && !pageClosed()) await delay(5000);
+        const protectedStop = /安全驗證|機器人驗證|HTTP (403|429)|網站負載|AUTH_INVALID|登入|sign.in|log.in|authentication/i.test(error instanceof Error ? error.message : String(error));
+        const onLoginPage = !pageClosed() && await loginOrChallengeVisible().catch(() => false);
+        if (attempt <= retries && !protectedStop && !onLoginPage && step.kind !== "manual" && step.kind !== "navigate" && !pageClosed()) await delay(5000);
         else break;
       }
     }
@@ -1172,7 +1302,8 @@ async function executeSteps(steps: any[]): Promise<void> {
 }
 
 try {
-  await event("run_started", { project: workflow.id, version: workflow.version });
+  await event("run_started", { project: workflow.id, version: workflow.version, initialUrl: page.url(), openTabs: context.pages().length });
+  await requestManualAuthentication("initial existing tab");
   await executeSteps(workflow.steps);
   await event("run_completed", { url: page.url() });
   console.log(`流程完成。執行證據：${artifactDir}`);

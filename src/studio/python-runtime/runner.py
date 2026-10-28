@@ -12,7 +12,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from engine import BrowserEngine
 
 ROOT = Path(__file__).resolve().parent
@@ -46,11 +46,11 @@ def validate(project, backend):
     if backend not in ('selenium', 'playwright'): errors.append('Unknown Python backend')
     if not project.get('allowedDomains'): errors.append('Project allowedDomains is empty')
     if browser.get('authStateEnabled'):
-        verify_url, success_selector = browser.get('authVerifyUrl'), browser.get('authSuccessSelector')
-        if not verify_url or not success_selector:
-            errors.append('Managed Auth requires authVerifyUrl AND authSuccessSelector; configure in Automation Studio first')
-        elif len(str(success_selector)) > 400 or urlsplit(verify_url).hostname not in project.get('allowedDomains', []):
-            errors.append('Managed Auth verification host must be explicitly allowed, and selector length must not exceed 400')
+        verify_url, success_selector = browser.get('authVerifyUrl'), browser.get('authSuccessSelector') or ''
+        if not verify_url:
+            errors.append('Managed Auth requires authVerifyUrl to identify the CMS website')
+        elif urlsplit(verify_url).hostname not in project.get('allowedDomains', []) or len(str(success_selector)) > 400:
+            errors.append('Managed Auth verification host must be allowed; optional selector must be at most 400 chars')
     for step in iter_steps(project.get('steps') or []):
         kind = step.get('kind')
         if kind not in SUPPORTED:
@@ -86,6 +86,9 @@ class Runner:
     def __init__(self, project, engine, parameters):
         self.project, self.engine, self.parameters = project, engine, parameters
         self.variables, self.collections, self.completed, self.downloaded = {}, {}, [], []
+        # The click on 檢視 can open a sibling Chrome tab; remember which tabs
+        # existed before the click so stale reports are never silently selected.
+        self._pending_result_click = None
         self.logs = ROOT / 'logs'
         self.logs.mkdir(parents=True, exist_ok=True)
         self.out = ROOT / 'output'
@@ -103,58 +106,274 @@ class Runner:
     def locate(self, step, key='selectors', timeout=None):
         return self.engine.locate(self.rules(step, key), step.get('matchMode', 'unique'), step.get('matchIndex', 1), timeout or step.get('timeoutMs', 10000), step.get('frame'), step.get('autoFrameSearch',False))
 
-    def auth_check(self):
-        browser = self.project.get('browser', {})
-        if not browser.get('authStateEnabled'): return
-        url = browser['authVerifyUrl']
-        require_domain(url, self.project)
-        # CDP: do not disturb tabs the user already has open.
-        if self.engine.external and not getattr(self, '_auth_tab_created', False):
-            self.engine.new_tab('__auth_check__', None)
-            self._auth_tab_created = True
-        self.engine.goto(url)
-        actual = urlsplit(self.engine.url())
-        expected = urlsplit(url)
-        if (actual.scheme, actual.hostname, actual.port) != (expected.scheme, expected.hostname, expected.port):
-            raise RuntimeError('Auth verification redirected to another origin')
-        item = self.engine.locate([{'strategy': 'css', 'value': browser['authSuccessSelector']}], timeout=15000)
-        if not self.engine.visible(item): raise RuntimeError('Auth success selector is not visible')
+    def _login_or_challenge_visible(self):
+        # Inspect the current document only. Never open a verification tab.
+        url = (self.engine.url() or '').lower()
+        if re.search(r'/(?:login|sign-?in|signin|sso)(?:[/?#]|$)|/connect/authorize|/cdn-cgi/challenge', url):
+            return True
+        try:
+            if self.engine.backend == 'playwright':
+                if self.engine.page.locator('input[type="password"]:visible').count():
+                    return True
+                if self.engine.page.locator('iframe[src*="turnstile"],iframe[src*="recaptcha"]').count():
+                    return True
+            else:
+                return bool(self.engine.browser.execute_script('''
+                    const nodes = Array.from(document.querySelectorAll('input[type="password"],iframe[src*="turnstile"],iframe[src*="recaptcha"]'));
+                    return nodes.some(el => !!el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden') ||
+                        /verify you are human|checking your browser|驗證您是人類|安全驗證|機器人驗證/i.test(document.title);
+                '''))
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    def _auth_log_url(url):
+        # Do not print login callback query strings or authorization tokens.
+        parsed = urlsplit(str(url or ''))
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', '')) or str(url)
+
+    def _auth_tab_urls(self):
+        # Test stubs and older standalone engines may not support CDP snapshots.
+        snapshot = getattr(self.engine, 'auth_tab_urls', None)
+        if callable(snapshot):
+            return snapshot()
+        return {getattr(self.engine, '_tab_id', lambda: 'current')(): self.engine.url()}
+
+    def _auth_tab_id(self):
+        return getattr(self.engine, '_tab_id', lambda: 'current')()
+
+    def _is_authenticated_page_candidate(self, url):
+        """URL is a sign-in *candidate*, not proof that site cookies are valid."""
+        parsed = urlsplit(str(url or ''))
+        expected = urlsplit(self.project.get('browser', {}).get('authVerifyUrl')
+                            or self.project['targetUrl'])
+        if ((parsed.scheme, parsed.hostname, parsed.port) !=
+                (expected.scheme, expected.hostname, expected.port)):
+            return False
+        if parsed.path.lower().rstrip('/') in ('/404', '/403', '/401', '/error', '/access-denied'):
+            return False
+        if re.search(r'/(?:login|logout|sign-?in|signin|sso)(?:[/?#]|$)|/connect/authorize|/cdn-cgi/challenge',
+                     parsed.path.lower()):
+            return False
+        return True
+
+    def _peer_login_tab_visible(self):
+        """Detect a same-site login tab when the workflow page is an error page."""
+        current = self.engine.url()
+        if urlsplit(current).path.rstrip('/') not in ('/404', '/403', '/401', '/error'):
+            return False
+        host = urlsplit(self.project.get('browser', {}).get('authVerifyUrl')
+                        or self.project['targetUrl']).hostname
+        for tab_id, url in self._auth_tab_urls().items():
+            parsed = urlsplit(str(url))
+            if tab_id != self._auth_tab_id() and parsed.hostname == host and re.search(
+                    r'/(?:login|sign-?in|signin|sso)(?:[/?#]|$)', parsed.path.lower()):
+                return True
+        return False
+
+    def _manual_auth_on_current_tab(self, resume_target=None):
+        # Unlike V3, watch *all* Chrome CDP tabs without changing which tab
+        # the user is typing in. The site's login flow may finish in a sibling.
+        if getattr(self, '_manual_auth_requested', False):
+            raise RuntimeError('AUTH_INVALID: login required again after manual login; check CDP Session/Cookie')
+        if self.project.get('browser', {}).get('headless'):
+            raise RuntimeError('AUTH_REQUIRED: authentication needs a visible Chrome window')
+        self._manual_auth_requested = True
+        initial_tab = self._auth_tab_id()
+        initial_urls = self._auth_tab_urls()
+        print('[AUTH] Login/challenge detected; monitoring all CDP Chrome tabs:',
+              ', '.join(self._auth_log_url(u) for u in initial_urls.values()), flush=True)
+        print('[AUTH] Complete sign-in in THIS CDP Chrome (including a site-opened new tab). '
+              'Workflow auto-resumes within 180s; no Enter required.', flush=True)
+        deadline = time.monotonic() + 180
+        candidate, stable = None, 0
+        last_status = None
+        while time.monotonic() < deadline:
+            urls = self._auth_tab_urls()
+            # Ignore stale pre-existing dashboard tabs. A different tab is only
+            # eligible if it was created or navigated after sign-in started.
+            eligible = [(tab_id, url) for tab_id, url in urls.items()
+                        if self._is_authenticated_page_candidate(url)
+                        and (tab_id == initial_tab or initial_urls.get(tab_id) != url)]
+            # The original login tab must transition away from its login URL.
+            # If it already displayed a protected page at entry, it cannot be
+            # used to bypass the login currently happening elsewhere.
+            eligible = [(tab_id, url) for tab_id, url in eligible
+                        if tab_id != initial_tab or initial_urls.get(tab_id) != url]
+            def rank(entry):
+                _, url = entry
+                path = urlsplit(url).path
+                if resume_target and path == urlsplit(resume_target).path: return 3
+                if path.startswith('/dataset/provider/'): return 2
+                return 1
+            eligible.sort(key=rank, reverse=True)
+            chosen = eligible[0][0] if eligible else None
+            if chosen is not None and chosen == candidate:
+                stable += 1
+            else:
+                candidate, stable = chosen, 1 if chosen is not None else 0
+            status = tuple(sorted(self._auth_log_url(u) for u in urls.values()))
+            if status != last_status:
+                print('[AUTH] CDP tab URLs:', ' | '.join(status) or '(none)', flush=True)
+                last_status = status
+            if stable >= 3:
+                self.engine.select_auth_tab(candidate)
+                # A URL transition alone does not prove login; do a final
+                # check on the selected tab before restoring the target.
+                if self._login_or_challenge_visible():
+                    candidate, stable = None, 0
+                    time.sleep(.7)
+                    continue
+                break
+            time.sleep(.7)
+        else:
+            status = ' | '.join(self._auth_log_url(u) for u in self._auth_tab_urls().values())
+            raise RuntimeError('AUTH_TIMEOUT: no completed login was detected in the CDP Chrome '
+                               f'tabs after 180s. Tabs: {status}. '
+                               'Verify that the sign-in finished in this Chrome profile, '
+                               'not ordinary Chrome.')
+        print('[AUTH] Login completed in Chrome tab:', self._auth_log_url(self.engine.url()), flush=True)
+        if resume_target and self.engine.url().rstrip('/') != resume_target.rstrip('/'):
+            require_domain(resume_target, self.project)
+            print('[AUTH] Resuming original workflow URL:', resume_target, flush=True)
+            self.engine.goto(resume_target)  # one recovery navigation only
+            if self._login_or_challenge_visible():
+                raise RuntimeError(f'AUTH_INVALID: site redirected to login after manual sign-in: '
+                                   f'{self._auth_log_url(self.engine.url())}')
+        return True
 
     def ensure_auth(self):
-        if not self.project.get('browser', {}).get('authStateEnabled'): return
-        try:
-            try:
-                self.auth_check()
-                print('[AUTH] Already authenticated')
-                return
-            except Exception as error:
-                if self.project['browser'].get('headless'):
-                    raise RuntimeError('AUTH_INVALID: headless mode cannot request human verification') from error
-                print('[AUTH] Login verification failed. Please sign in or complete website challenge in visible Chrome.')
-                print('[AUTH] This program cannot bypass Cloudflare, MFA or other security checks.')
-                # Give control back to the website tab so user can log in there.
-                if self.engine.external:
-                    try: self.engine.switch_tab('name', 'initial')
-                    except Exception: pass
-                input('Complete verification in this browser; then press Enter to verify again...')
-                try: self.auth_check()
-                except Exception as repeated:
-                    raise RuntimeError('AUTH_INVALID: login still not verified after human action') from repeated
-                print('[AUTH] Manual authentication verified; continuing in the same browser session')
-        finally:
-            # Auth health checks use their own tab. Workflow actions should begin on
-            # the original website tab, not on the verification URL tab.
-            if self.engine.external:
-                try: self.engine.switch_tab('name', 'initial')
-                except Exception: pass
+        # Do not navigate to authVerifyUrl, create a __auth_check__ tab, or use
+        # a table-header CSS selector as a reason to request sign-in again.
+        if not self.project.get('browser', {}).get('authStateEnabled'):
+            return
+        current = self.engine.url()
+        print('[AUTH] Current CDP tab:', current)
+        if current == 'about:blank':
+            print('[AUTH] This CDP Chrome has a separate login profile; signing in to normal Chrome does not necessarily sign in here.')
+        if self._login_or_challenge_visible():
+            self._manual_auth_on_current_tab()
+        else:
+            print('[AUTH] No visible login challenge; workflow will check access on its real target page.')
 
     def after_action(self):
         require_domain(self.engine.url(), self.project)
 
-    def wait(self, rule, auto_frame=False):
+    def _capture_result_click(self, step, element):
+        """Remember view-link origin without changing, replaying, or re-clicking it."""
+        self._pending_result_click = None
+        if self.engine.backend != 'selenium':
+            return
+        try:
+            before = self._auth_tab_urls()
+            self._pending_result_click = {
+                'origin': self._auth_tab_id(),
+                'tabs': dict(before),
+                'step': str(step.get('name') or ''),
+            }
+            # Diagnostics do not expose callback parameters or cookie values.
+            target = element.get_attribute('target') or '(same tab)'
+            href = element.get_attribute('href') or '(script-driven)'
+            if urlsplit(str(href)).scheme not in ('http', 'https'):
+                href = '(script-driven)'
+            print('[TAB] Clicked element; target:', str(target)[:80],
+                  'href:', self._auth_log_url(href)[:250], flush=True)
+        except Exception as error:
+            print('[TAB] Click provenance unavailable:', type(error).__name__, flush=True)
+
+    def _await_report_after_view_click(self, step):
+        """Find the report *by its real table*, not by a guessed tab index/URL.
+
+        A Selenium CDP click can leave WebDriver focused on the listing while a
+        new tab/window displays the result. We only adopt a tab on the allowed
+        CMS host when it contains the exact selector required by this extract.
+        Neither login navigation nor a repeated click is performed here.
+        """
+        rule = step.get('waitBefore') or {}
+        if (self.engine.backend != 'selenium' or not self._pending_result_click
+                or rule.get('kind') != 'visible' or not rule.get('value')):
+            self.wait(rule, step.get('autoFrameSearch', False))
+            return
+        pending = self._pending_result_click
+        self._pending_result_click = None  # never reuse stale popup provenance
+        locator = self.expand(rule['value'])
+        timeout = int(rule.get('timeoutMs') or step.get('timeoutMs') or 30000)
+        deadline = time.monotonic() + timeout / 1000
+        origin = pending['origin']
+        previous = pending['tabs']
+        allowed_hosts = self.project.get('allowedDomains') or []
+        last_state = None
+        while time.monotonic() < deadline:
+            urls = self._auth_tab_urls()
+            # A tab opened by an earlier workflow run must not be adopted.
+            # Accept the originating tab and newly opened/navigated tabs only.
+            candidates = [(handle, url) for handle, url in urls.items()
+                          if handle == origin or handle not in previous
+                          or previous.get(handle) != url]
+            def rank(pair):
+                handle, _url = pair
+                if handle == origin: return 0
+                return 1 if handle not in previous else 2
+            candidates.sort(key=rank)
+            matches = []
+            for handle, url in candidates:
+                parsed = urlsplit(str(url))
+                if not hostname_allowed(url, allowed_hosts):
+                    continue
+                if parsed.path.lower().rstrip('/') in ('/login','/404','/403','/401','/error'):
+                    continue
+                try:
+                    self.engine.select_auth_tab(handle)
+                    _exists, visible = self.engine.selector_state(
+                        [{'strategy': 'css', 'value': locator}],
+                        auto_frame=step.get('autoFrameSearch', False))
+                    if visible:
+                        matches.append((handle, self.engine.url()))
+                except Exception:
+                    continue  # Tab can close during site-managed navigation.
+            if len(matches) == 1:
+                selected, url = matches[0]
+                self.engine.select_auth_tab(selected)
+                print('[TAB] Expected content found in',
+                      'current' if selected == origin else 'another',
+                      'Chrome tab:', self._auth_log_url(url), flush=True)
+                return
+            if len(matches) > 1:
+                # Do not pick the first of multiple indistinguishable reports.
+                targets = ' | '.join(self._auth_log_url(url) for _,url in matches)
+                raise RuntimeError('TAB_AMBIGUOUS: multiple tabs contain the '
+                                   f'expected content: {targets}')
+            # Keep Selenium's active handle aligned with the originating page
+            # while waiting, rather than the last inspected unrelated tab.
+            try:
+                if origin in self.engine.browser.window_handles:
+                    self.engine.select_auth_tab(origin)
+            except Exception:
+                pass
+            normalized = tuple(sorted(self._auth_log_url(url) for url in urls.values()))
+            if normalized != last_state:
+                print('[TAB] Available Chrome tabs:', ' | '.join(normalized) or '(none)', flush=True)
+                last_state = normalized
+            time.sleep(.3)
+        urls = self._auth_tab_urls()
+        summary = ' | '.join(self._auth_log_url(url) for url in urls.values()) or '(no tabs)'
+        try:
+            if origin in self.engine.browser.window_handles:
+                self.engine.select_auth_tab(origin)
+        except Exception:
+            pass
+        # Fail closed: no fallback to an unrelated list page or a broad table.
+        raise TimeoutError('TAB_RESULT_TIMEOUT: after clicking an element, no allowed Chrome tab '
+                           'contained the expected element after '
+                           f'{timeout}ms. Required selector: {locator}. '
+                           f'Chrome tabs: {summary}. '
+                           'Check whether the site opened a popup, a modal, or a different page layout.')
+
+    def wait(self, rule, auto_frame=False, resume_target=None):
         if not rule: return
         kind = rule.get('kind')
-        timeout = int(rule.get('timeoutMs') or 10000)
+        timeout = int(rule.get('timeoutMs') or self.project.get('browser', {}).get('defaultTimeoutMs') or 30000)
         val = self.expand(rule.get('value') or '')
         if kind == 'timeout': time.sleep(timeout / 1000); return
         if kind == 'networkIdle':
@@ -166,17 +385,23 @@ class Runner:
                     time.sleep(.2)
                 raise TimeoutError('Document load timed out')
             return
-        deadline = time.monotonic() + timeout/1000
+        deadline = time.monotonic() + timeout / 1000
         while time.monotonic() < deadline:
+            # A delayed redirect to /login happens while waiting for the
+            # workflow element. Pause the wait and resume the target after login.
+            if kind in ('visible', 'attached', 'url') and self.project.get('browser', {}).get('authStateEnabled') and (self._login_or_challenge_visible() or self._peer_login_tab_visible()):
+                self._manual_auth_on_current_tab(resume_target)
+                deadline = time.monotonic() + timeout / 1000
             if kind == 'url' and val in self.engine.url(): return
-            if kind in ('visible','hidden','attached'):
+            if kind in ('visible', 'hidden', 'attached'):
                 attached, visible = self.engine.selector_state(
-                    [{'strategy':'css','value':val}],
-                    auto_frame=auto_frame or rule.get('autoFrameSearch',False))
-                if kind == 'attached' and attached or kind == 'visible' and visible or kind == 'hidden' and not visible:
+                    [{'strategy': 'css', 'value': val}],
+                    auto_frame=auto_frame or rule.get('autoFrameSearch', False))
+                if ((kind == 'attached' and attached) or (kind == 'visible' and visible)
+                        or (kind == 'hidden' and not visible)):
                     return
             time.sleep(.3)
-        raise TimeoutError('Wait timed out: ' + str(kind))
+        raise TimeoutError(f'WAIT_TIMEOUT: {kind} {val}; current URL: {self.engine.url()}')
 
     def verify(self, rule):
         if not rule: return
@@ -473,7 +698,14 @@ class Runner:
 
     def execute(self, step):
         kind = step['kind']
-        self.wait(step.get('waitBefore'),step.get('autoFrameSearch',False))
+        if kind == 'extractWebData' and self._pending_result_click and self.engine.backend == 'selenium':
+            self._await_report_after_view_click(step)
+        else:
+            # Click provenance applies only to the next extraction; never use an
+            # old click to select an unrelated tab several steps later.
+            if kind not in ('extractWebData',):
+                self._pending_result_click = None
+            self.wait(step.get('waitBefore'),step.get('autoFrameSearch',False))
         if kind == 'condition':
             self.run_steps(step.get('thenSteps', []) if self.check_condition(step.get('condition') or {}) else step.get('elseSteps', []))
         elif kind == 'loop':
@@ -485,10 +717,29 @@ class Runner:
                 self.variables[step.get('loopVariable') or 'item'] = value
                 self.run_steps(step.get('steps') or [])
         elif kind in ('navigate','newTab'):
+            self._pending_result_click = None
             dest=self.expand(step.get('url') or step.get('value') or ('about:blank' if kind=='newTab' else self.project['targetUrl']))
             if dest!='about:blank':require_domain(dest,self.project)
-            if kind=='newTab':self.engine.new_tab(step.get('tabName'),dest if dest!='about:blank' else None)
-            else:self.engine.goto(dest)
+            if kind=='newTab':
+                self.engine.new_tab(step.get('tabName'), dest if dest!='about:blank' else None)
+            else:
+                # Never reload a page already at the intended URL; that can
+                # retrigger an identity-provider redirect or Cloudflare.
+                if self.engine.url().rstrip('/') == dest.rstrip('/'):
+                    print('[AUTH] Skipping navigation: already on the requested URL')
+                else:
+                    print('[NAV] Opening workflow target:', dest)
+                    try:
+                        self.engine.goto(dest)
+                    except Exception:
+                        # Navigation may time out because the site redirected to
+                        # a pending login screen. Do not swallow unrelated errors.
+                        if not (self.project.get('browser', {}).get('authStateEnabled') and self._login_or_challenge_visible()):
+                            raise
+                        print('[AUTH] Navigation timed out while site login is showing; waiting for manual sign-in.')
+                    print('[NAV] Website landed on:', self.engine.url())
+            if self.project.get('browser', {}).get('authStateEnabled') and (self._login_or_challenge_visible() or self._peer_login_tab_visible()):
+                self._manual_auth_on_current_tab(dest if kind == 'navigate' else None)
         elif kind == 'switchTab':
             self.engine.switch_tab(step.get('tabTargetMode','index'), self.expand(step.get('tabTarget','')), int(step.get('tabIndex') or 1))
         elif kind in ('click','dblclick','fill','select','upload','press','hover','check','uncheck'):
@@ -497,6 +748,10 @@ class Runner:
                 self.engine.component_action(step,value)
             else:
                 item=self.locate(step)
+                if kind == 'click':
+                    self._capture_result_click(step, item)
+                else:
+                    self._pending_result_click = None
                 self.engine.act(kind,item,value)
         elif kind == 'download':
             item=self.locate(step)
@@ -570,7 +825,7 @@ class Runner:
         else: raise RuntimeError('Unsupported action: ' + kind)
         if not (kind=='newTab' and self.engine.url()=='about:blank'):
             self.after_action()
-        if kind != 'wait': self.wait(step.get('waitAfter'),step.get('autoFrameSearch',False))
+        if kind != 'wait': self.wait(step.get('waitAfter'),step.get('autoFrameSearch',False), dest if kind == 'navigate' else None)
         self.verify(step.get('verification'))
 
     def run_steps(self, steps):

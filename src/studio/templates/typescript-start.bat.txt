@@ -1,0 +1,145 @@
+@echo off
+setlocal EnableExtensions
+cd /d "%~dp0" || goto failed
+if not exist ".local\setup-temp" mkdir ".local\setup-temp" || goto failed
+set "TEMP=%CD%\.local\setup-temp"
+set "TMP=%TEMP%"
+set "npm_config_cache=%CD%\.local\npm-cache"
+set "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1"
+if "%NODE_USE_SYSTEM_CA%"=="" set "NODE_USE_SYSTEM_CA=1"
+set "NODE_TLS_REJECT_UNAUTHORIZED="
+set "NODE_VERSION=24.13.0"
+set "NODE_ZIP_SHA256=CA2742695BE8DE44027D71B3F53A4BDB36009B95575FE1AE6F7F0B5CE091CB88"
+set "STUDIO_NODE="
+set "STUDIO_NPM="
+rem Verify executable health separately. Node without npm is usable, but npm must be recovered.
+rem Prefer a verified project-local pair to avoid downloading again.
+set "STUDIO_NODE=%CD%\runtime\node\node.exe"
+set "STUDIO_NPM=%CD%\runtime\node\npm.cmd"
+if exist "%STUDIO_NODE%" if exist "%STUDIO_NPM%" if exist "%CD%\runtime\node\node_modules\npm\bin\npm-cli.js" (
+  "%STUDIO_NODE%" --version >nul 2>&1
+  if not errorlevel 1 (
+    call "%STUDIO_NPM%" --version >nul 2>&1
+    if not errorlevel 1 (
+      "%STUDIO_NODE%" --experimental-strip-types --check src\run.ts >nul 2>&1
+      if not errorlevel 1 (
+        echo [Setup] Reusing verified project-local Node.js and npm.
+        goto node_ready
+      )
+    )
+  )
+)
+set "SYSTEM_NODE="
+set "SYSTEM_NPM="
+for /f "delims=" %%P in ('where node.exe 2^>nul') do if not defined SYSTEM_NODE call :try_system_node "%%~fP"
+if defined SYSTEM_NODE (
+  rem Prefer npm.cmd next to the validated node.exe (including the node_modules npm payload).
+  for %%P in ("%SYSTEM_NODE%") do call :try_system_npm "%%~dpPnpm.cmd" "%%~dpPnode_modules\npm\bin\npm-cli.js"
+  rem PATH npm is a fallback, but reject package-local node_modules npm paths.
+  if not defined SYSTEM_NPM for /f "delims=" %%P in ('where npm.cmd 2^>nul') do if not defined SYSTEM_NPM call :try_system_npm "%%~fP"
+)
+if defined SYSTEM_NPM (
+  set "STUDIO_NODE=%SYSTEM_NODE%"
+  set "STUDIO_NPM=%SYSTEM_NPM%"
+  echo [Setup] Verified installed Node.js and npm using --version.
+  goto node_ready
+)
+if defined SYSTEM_NODE (
+  echo [Setup] Node.js --version succeeded, but no verified matching npm.cmd is available.
+  echo [Setup] Recovering npm from the SHA256-pinned official Node.js release archive.
+) else (
+  echo [Setup] No usable Node.js detected. Installing verified portable Node.js and npm.
+)
+goto install_node
+:try_system_node
+if defined SYSTEM_NODE exit /b 0
+if not exist "%~1" exit /b 0
+"%~1" --version >nul 2>&1
+if errorlevel 1 exit /b 0
+"%~1" --experimental-strip-types --check src\run.ts >nul 2>&1
+if errorlevel 1 exit /b 0
+set "SYSTEM_NODE=%~1"
+exit /b 0
+:try_system_npm
+if defined SYSTEM_NPM exit /b 0
+if not exist "%~1" exit /b 0
+rem Avoid confusing the workflow project dependency tree with a Node installation.
+echo(%~1 | findstr /i /c:"\node_modules\npm\" >nul && exit /b 0
+rem When provided, require the paired npm-cli.js alongside the command.
+if not "%~2"=="" if not exist "%~2" exit /b 0
+call "%~1" --version >nul 2>&1
+if errorlevel 1 exit /b 0
+set "SYSTEM_NPM=%~1"
+exit /b 0
+:install_node
+set "NODE_ARCHIVE=%TEMP%\node-v%NODE_VERSION%-win-x64.zip"
+set "NODE_URL=https://nodejs.org/dist/v%NODE_VERSION%/node-v%NODE_VERSION%-win-x64.zip"
+echo [Setup] Downloading pinned Node.js v%NODE_VERSION% (including npm)...
+call :download_node || goto failed
+powershell.exe -NoProfile -Command "$f=$env:NODE_ARCHIVE; $hash=(Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash; if($hash -ne $env:NODE_ZIP_SHA256){Write-Error 'Pinned Node.js archive SHA256 mismatch';exit 1}" || goto failed
+set "NODE_STAGE=%TEMP%\node-unpack"
+if exist "%NODE_STAGE%" rmdir /s /q "%NODE_STAGE%"
+powershell.exe -NoProfile -Command "Expand-Archive -LiteralPath $env:NODE_ARCHIVE -DestinationPath $env:NODE_STAGE -Force" || goto failed
+if not exist "%NODE_STAGE%\node-v%NODE_VERSION%-win-x64\node.exe" goto failed
+if not exist "%NODE_STAGE%\node-v%NODE_VERSION%-win-x64\npm.cmd" goto failed
+if not exist "%NODE_STAGE%\node-v%NODE_VERSION%-win-x64\node_modules\npm\bin\npm-cli.js" goto failed
+if not exist "runtime" mkdir "runtime" || goto failed
+if exist "runtime\node" rmdir /s /q "runtime\node"
+move "%NODE_STAGE%\node-v%NODE_VERSION%-win-x64" "runtime\node" >nul || goto failed
+set "STUDIO_NODE=%CD%\runtime\node\node.exe"
+set "STUDIO_NPM=%CD%\runtime\node\npm.cmd"
+"%STUDIO_NODE%" --version >nul 2>&1 || goto failed
+call "%STUDIO_NPM%" --version >nul 2>&1 || goto failed
+echo [Setup] Project-local Node.js and npm installed and verified.
+goto node_ready
+:download_node
+curl.exe --fail --location --retry 2 --output "%NODE_ARCHIVE%" "%NODE_URL%" 2>"%TEMP%\node-download-error.log"
+if not errorlevel 1 exit /b 0
+findstr /i /c:"CRYPT_E_NO_REVOCATION_CHECK" /c:"revocation" "%TEMP%\node-download-error.log" >nul
+if not errorlevel 1 (
+  echo [Setup] Certificate revocation check unavailable. Retrying with best-effort revocation.
+  curl.exe --fail --location --retry 2 --ssl-revoke-best-effort --output "%NODE_ARCHIVE%" "%NODE_URL%" 2>"%TEMP%\node-download-error.log"
+  if not errorlevel 1 exit /b 0
+  echo [Setup] Retrying without revocation check for this transfer only.
+  curl.exe --fail --location --retry 2 --ssl-no-revoke --output "%NODE_ARCHIVE%" "%NODE_URL%" 2>"%TEMP%\node-download-error.log"
+  if not errorlevel 1 exit /b 0
+)
+rem Certificate-chain failure: final one-transfer fallback, archive pinned SHA256 is mandatory.
+findstr /i /c:"certificate" /c:"SSL certificate" /c:"CERT_" /c:"schannel" "%TEMP%\node-download-error.log" >nul
+if errorlevel 1 exit /b 1
+echo [WARNING] Certificate-chain check failed; this single pinned download will retry insecurely, then SHA256 MUST match.
+curl.exe --fail --location --retry 2 --insecure --output "%NODE_ARCHIVE%" "%NODE_URL%" 2>"%TEMP%\node-download-error.log"
+exit /b %ERRORLEVEL%
+:node_ready
+"%STUDIO_NODE%" --version || goto failed
+call "%STUDIO_NPM%" --version || goto failed
+"%STUDIO_NODE%" --experimental-strip-types --check src\run.ts >nul 2>&1 || goto failed
+set "INSTALL_REQUIRED=0"
+if not exist "node_modules\playwright\package.json" set "INSTALL_REQUIRED=1"
+findstr /c:"puppeteer-extra-plugin-stealth" package.json >nul 2>&1
+if not errorlevel 1 if not exist "node_modules\puppeteer-extra-plugin-stealth\package.json" set "INSTALL_REQUIRED=1"
+findstr /c:"playwright-extra" package.json >nul 2>&1
+if not errorlevel 1 if not exist "node_modules\playwright-extra\package.json" set "INSTALL_REQUIRED=1"
+rem Local Node must be visible to npm's child processes.
+if exist "%CD%\runtime\node\node.exe" if /i "%STUDIO_NODE%"=="%CD%\runtime\node\node.exe" set "PATH=%CD%\runtime\node;%PATH%"
+if "%INSTALL_REQUIRED%"=="1" (
+  echo [Setup] Installing missing npm dependencies without Chromium...
+  call "%STUDIO_NPM%" install --no-audit --no-fund --ignore-scripts --prefer-offline > ".local\npm-install.log" 2>&1
+  if errorlevel 1 (
+    findstr /i /c:"UNABLE_TO_GET_ISSUER_CERT_LOCALLY" /c:"CERT_HAS_EXPIRED" /c:"SELF_SIGNED_CERT_IN_CHAIN" /c:"UNABLE_TO_VERIFY_LEAF_SIGNATURE" /c:"CERTIFICATE_VERIFY_FAILED" ".local\npm-install.log" >nul 2>&1
+    if errorlevel 1 (type ".local\npm-install.log" & goto failed)
+    echo [WARNING] npm TLS verification fallback for this install invocation only.
+    call "%STUDIO_NPM%" --strict-ssl=false install --no-audit --no-fund --ignore-scripts --prefer-offline > ".local\npm-install.log" 2>&1
+    if errorlevel 1 (type ".local\npm-install.log" & goto failed)
+  )
+) else (echo [Setup] Reusing existing npm packages.)
+set "NODE_TLS_REJECT_UNAUTHORIZED="
+"%STUDIO_NODE%" --experimental-strip-types src\run.ts %*
+set "EXIT_CODE=%ERRORLEVEL%"
+if not "%EXIT_CODE%"=="0" pause
+exit /b %EXIT_CODE%
+:failed
+set "NODE_TLS_REJECT_UNAUTHORIZED="
+echo [ERROR] TypeScript auto-deployment failed. See .local logs and network permissions.
+pause
+exit /b 1

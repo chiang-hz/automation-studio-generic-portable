@@ -3,12 +3,12 @@
   'use strict';
   const id = 'studio-auth-panel-native';
   const css = document.createElement('style');
-  css.textContent = `#${id}{margin:18px 0;padding:20px;border:1px solid var(--border,#a0aab5);border-radius:12px;max-width:100%;box-sizing:border-box} #${id} h3{font-size:17px;font-weight:700;margin:0 0 6px} #${id} p{margin:4px 0 12px;line-height:1.55} #${id} .auth-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px} #${id} label{display:flex;flex-direction:column;gap:5px;font-size:13px} #${id} label.auth-switch{flex-direction:row;align-items:center;gap:8px} #${id} input:not([type=checkbox]),#${id} select{width:100%;box-sizing:border-box;border:1px solid #9ba5af;border-radius:6px;padding:9px;font:inherit;min-width:0;background:var(--surface,#fff);color:inherit} #${id} .auth-buttons{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px} #${id} button{border:1px solid #89939d;border-radius:7px;padding:9px 12px;cursor:pointer;background:var(--surface,#fff);color:inherit} #${id} button:disabled{opacity:.45;cursor:not-allowed} #${id} .auth-status{font-size:13px;margin-top:12px;overflow-wrap:anywhere;white-space:pre-line} #${id} small{display:block;font-size:12px;opacity:.8} #${id} .auth-discover{border:1px solid var(--border,#ccd3dc);border-radius:10px;padding:14px;margin-top:12px} #${id} .auth-good{border-left:3px solid #15835b;padding:8px 12px;overflow-wrap:anywhere} #${id} details{margin:12px 0;border:1px solid var(--border,#ccd3dc);border-radius:8px;padding:10px} #${id} summary{cursor:pointer;font-weight:600} #${id} .auth-caption{overflow-wrap:anywhere;font-size:12px;color:inherit;opacity:.85}`;
+  css.textContent = `#${id}{margin:18px 0;padding:20px;border:1px solid var(--border,#a0aab5);border-radius:12px;max-width:100%;box-sizing:border-box} #${id} h3{font-size:17px;font-weight:700;margin:0 0 6px} #${id} p{margin:4px 0 12px;line-height:1.55} #${id} .auth-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px} #${id} label{display:flex;flex-direction:column;gap:5px;font-size:13px} #${id} label.auth-switch{flex-direction:row;align-items:center;gap:8px} #${id} input:not([type=checkbox]),#${id} select{width:100%;box-sizing:border-box;border:1px solid #9ba5af;border-radius:6px;padding:9px;font:inherit;min-width:0;background:var(--surface,#fff);color:inherit} #${id} .auth-buttons{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px} #${id} button{border:1px solid #89939d;border-radius:7px;padding:9px 12px;cursor:pointer;background:var(--surface,#fff);color:inherit} #${id} button:disabled{opacity:.45;cursor:not-allowed} #${id} .auth-status{font-size:13px;margin-top:12px;overflow-wrap:anywhere;white-space:pre-line} #${id} small{display:block;font-size:12px;opacity:.8} #${id} .auth-discover{border:1px solid var(--border,#ccd3dc);border-radius:10px;padding:14px;margin-top:12px} #${id} .auth-good{border-left:3px solid #15835b;padding:8px 12px;overflow-wrap:anywhere} #${id} details{margin:12px 0;border:1px solid var(--border,#ccd3dc);border-radius:8px;padding:10px} #${id} summary{cursor:pointer;font-weight:600} #${id} .auth-main-summary{cursor:pointer;font-size:17px;font-weight:700;line-height:1.5;list-style:revert} #${id} .auth-caption{overflow-wrap:anywhere;font-size:12px;color:inherit;opacity:.85}`;
   document.head.append(css);
   const panel = document.createElement('section');
   panel.id = id;
   panel.setAttribute('aria-label','CDP 登入狀態共用');
-  panel.innerHTML = `<h3>登入狀態共用（最多 3 個管理瀏覽器）</h3>
+  panel.innerHTML = `<details data-k="main" class="auth-main"><summary class="auth-main-summary">登入狀態共用（最多 3 個管理瀏覽器）</summary>
   <p>先用 Chrome 完成登入，再讓系統從目前開啟的網站自動找到登入檢查網址及登入後專屬元素。一般使用者不必輸入網址或 CSS。</p>
   <label class="auth-switch"><input data-k="enabled" type="checkbox"/> 在管理瀏覽器中使用保存的登入狀態（預設關閉）</label>
   <section class="auth-discover" aria-label="自動辨識登入狀態">
@@ -31,9 +31,9 @@
    <button type="button" data-action="unlock">解鎖保存狀態</button>
    <button type="button" data-action="lock">鎖定</button>
    <button type="button" data-action="saved">刪除保存狀態</button>
-  </div><div data-k="status" class="auth-status" role="status" aria-live="polite">未載入</div>`;
+  </div><div data-k="status" class="auth-status" role="status" aria-live="polite">未載入</div></details>`;
   const field = key => panel.querySelector(`[data-k="${key}"]`);
-  let currentId = '', busy = false, savedState = null, tabs = [], detected = false;
+  let currentId = '', currentMode = '', currentEnabled = null, dirtyEnabled = false, busy = false, savedState = null, tabs = [], detected = false;
   const show = text => { field('status').textContent = text; };
   const activeProject = () => window.studioBridge?.snapshot()?.state?.project;
   const api = (project, action) => `/api/studio/projects/${encodeURIComponent(project.id)}/auth/${action}`;
@@ -78,7 +78,8 @@
     field('verifyUrl').value = project.browser?.authVerifyUrl || '';
     field('selector').value = project.browser?.authSuccessSelector || '';
     field('passphrase').value = '';
-    field('enabled').disabled = project.browser?.connectionMode === 'cdp';
+    // The preference remains editable in CDP mode; only managed browsers apply saved auth state.
+    field('enabled').disabled = false;
     detected = Boolean(field('verifyUrl').value && field('selector').value);
     field('discovery').textContent = detected ? '已載入之前保存的辨識設定；如網站變動，可重新自動辨識。' : '尚未辨識。請先讀取網頁並自動辨識。';
     field('tab').replaceChildren(new Option('請先點擊讀取',''));
@@ -90,13 +91,15 @@
   }
   async function save(project) {
     const updated = {...project, browser: {...project.browser,
-      authStateEnabled: field('enabled').checked && project.browser?.connectionMode !== 'cdp',
+      authStateEnabled: field('enabled').checked,
       authVerifyUrl: field('verifyUrl').value.trim(),
       authSuccessSelector: field('selector').value.trim(),
       cdpEndpoint: field('cdpEndpoint').value.trim()
     }};
     const body = await jsonRequest(`/api/studio/projects/${encodeURIComponent(project.id)}`, {method:'PUT',headers:{'Content-Type':'application/json'},body: JSON.stringify(updated)});
     window.studioBridge?.adoptProject?.(body.project);
+    dirtyEnabled = false;
+    currentEnabled = body.project.browser?.authStateEnabled === true;
     return body.project;
   }
   function displayTabs(payload) {
@@ -124,6 +127,9 @@
     detected=true;
     field('discovery').textContent=`✓ 已完成登入辨識：${result.tabTitle}。\n檢查頁面：${result.verifyUrl}\n系統已確認未登入時不會出現相同辨識元素。可直接輸入密語並擷取保存。`;
   }
+  panel.addEventListener('change', event => {
+    if (event.target === field('enabled')) dirtyEnabled = true;
+  });
   panel.addEventListener('input', event => {
     if(event.target === field('selector') || event.target === field('verifyUrl')) {
       detected=false;
@@ -163,11 +169,21 @@
     const project = activeProject();
     if (!target || !project) {panel.remove();currentId='';return;}
     if (!panel.isConnected || panel.previousElementSibling !== target) target.insertAdjacentElement('afterend',panel);
+    const mode = project.browser?.connectionMode || 'managed';
+    const enabled = project.browser?.authStateEnabled === true;
     if (currentId !== project.id) {
       currentId = project.id;
+      currentMode = mode;
+      currentEnabled = enabled;
+      dirtyEnabled = false;
       fill(project);
       show('讀取登入狀態中…');
       refresh(project).catch(error=>show(`無法讀取登入狀態：${error.message}`));
+    } else {
+      // Browser mode changes do not change the project id. Never leave the checkbox disabled.
+      if (currentMode !== mode) {currentMode = mode;field('enabled').disabled = false;}
+      // Refresh external persisted changes without erasing an unsaved user selection.
+      if (currentEnabled !== enabled && !dirtyEnabled) {currentEnabled = enabled;field('enabled').checked = enabled;}
     }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',()=>{setInterval(tick,800);tick();});

@@ -1,21 +1,24 @@
-# 網站自動化流程設計平台 · Automation Studio (Portable v2.4.8)
+# 網站自動化流程設計平台 · Automation Studio (Portable v2.5.4)
 
 [![GitHub Repository](https://img.shields.io/badge/GitHub-chiang--hz%2Fautomation--studio--generic--portable-blue?logo=github)](https://github.com/chiang-hz/automation-studio-generic-portable)
-[![Release Version](https://img.shields.io/badge/version-2.4.8-green.svg)](VERSION)
+[![Release Version](https://img.shields.io/badge/version-2.5.4-green.svg)](VERSION)
 [![Node.js Runtime](https://img.shields.io/badge/node-v24.13.0%20(pinned)-brightgreen.svg)](scripts/portable-runtime-packages.json)
 [![Playwright](https://img.shields.io/badge/playwright-1.61.0-orange.svg)](https://playwright.dev)
 [![Python Export](https://img.shields.io/badge/python-3.10%2B%20(dual--engine%20%2B%20batch)-blue.svg)](PYTHON-EXPORT-README.zh-TW.md)
+[![TypeScript Export](https://img.shields.io/badge/typescript-zero--config%20auto--deploy-blue.svg)](TYPESCRIPT-NODE-NPM-RECOVERY-v2.5.3.md)
 
 **Automation Studio** 是一套專為 Windows 環境打造的本機視覺化網頁自動化流程設計、錄製、除錯、批次執行與多語言匯出發布平台。結合 **Playwright** 瀏覽器自動化引擎、**React 19** 現代化視覺操作介面、**AI 流程探索助理** 以及 **Model Context Protocol (MCP)** 服務架構，協助使用者以低代碼方式快速建立穩定、可維護的網頁資料擷取與自動化作業流程。
 
-在 **v2.2.x ～ v2.4.x** 系列版本中，平台迎來全面進化與企業級能力躍升：
+在 **v2.2.x ～ v2.5.x** 系列版本中，平台完成了一系列重磅企業級能力升級：
 1. **網頁資料擷取與原生彙整文件產製（v2.2.0）**：原生支援從單頁、重複清單或 HTML 表格擷取結構化資料，並以純本機 Open XML 原生輸出為 **Word (`.docx`)**、**Excel (`.xlsx`)** 或 **JSON (`.json`)**，免安裝 Office 亦無外部套件依賴。
-2. **CDP 登入狀態安全共用與免技術自動辨識（v2.2.1～v2.2.3）**：採用 **AES-256-GCM + scrypt** 安全保管本機 Chrome 登入狀態，支援非資訊人員一鍵列出分頁並自動辨識專屬登入元素，免手動輸入網址或 CSS。
+2. **CDP 登入狀態安全共用與免技術自動辨識（v2.2.1～v2.2.3, v2.5.4）**：採用 **AES-256-GCM + scrypt** 安全保管本機 Chrome 登入狀態，支援非資訊人員一鍵列出分頁並自動辨識專屬登入元素；v2.5.4 進一步將登入狀態面板預設收折，優化模式切換同步狀態與編輯鎖定保護。
 3. **管理瀏覽器人工驗證恢復與批次工作階段保留（v2.2.4）**：遇到網站二次認證或 Cloudflare 人工安全檢查時自動暫停，人員完成驗證後一鍵繼續；同一批次工作站自動保留驗證後的 Session，兼顧合規安全與大量作業效率。
 4. **Python 雙引擎（Playwright / Selenium）獨立專案匯出與一鍵執行（v2.3.x）**：支援一鍵匯出 **Python · Playwright** 與 **Python · Selenium** 獨立專案 ZIP；全 29 種動作元件完整相容；內建依賴自動化虛擬環境安裝（`run.bat` 自動建立 `.local/python-env`，支援 `wheelhouse/` 離線模式）；提供一鍵式 CDP 執行引導（`run-cdp.bat`）；強化 Selenium ARIA/CSS 定位與防固定導覽列遮擋置中點擊。
 5. **下載真實副檔名保留、動作隔離暫存與產物安全驗證（v2.4.0～v2.4.1）**：下載重新命名時智慧保留伺服器真實副檔名、HTTP 標頭解析與 Office ZIP / 檔案特徵 Magic 偵測，檔名衝突數字自動防覆寫；Selenium 僅在下載動作期間於獨立目錄暫存捕捉並於結束後恢復預設路徑；自動檢驗攔截 Chrome 背景 CRX 元件（如偽裝為 `downloads.htm` 的模型檔）及登入/錯誤 HTML 假冒檔案，安全隔離至 `.local/download-staging/` 並標記 `[DOWNLOAD-QUARANTINE]`，杜絕污染正式下載目錄。
-6. **【全新升級】智慧本機 Chrome 偵測免下載瀏覽器與 Windows 企業環境高容錯安裝（v2.4.2～v2.4.5）**：`setup-runtime.bat` 自動偵測電腦既有安裝的 Google Chrome，**自動跳過下載數百 MB 的 Playwright Chromium**（亦支援 `--install-bundled-browser` 強制安裝）；採用專案同磁碟暫存區消除跨磁碟機 `EXDEV` 錯誤；防毒軟體 `EPERM` 檔案鎖定自動重試與安全回滾；Windows Schannel 憑證撤銷查詢阻擋（curl 35）智慧降級重試，嚴格維持 SHA-256 與 SHA-512 雜湊驗證。
-7. **【全新升級】Python 獨立批次任務執行與 Excel 資料格支援（v2.4.6～v2.4.8）**：匯出的 Python 專案完整支援獨立批次任務執行（`run-batch.bat` / `run-batch-cdp.bat`）；原生支援 JSON、CSV 與 **Excel (`.xlsx`)** 批次資料格輸入；循序執行、每列獨立日誌與 JSON/CSV 摘要報表；支援「失敗時繼續執行 (continue) 或停止 (stop)」錯誤策略；機敏參數遮蔽保護。
+6. **智慧本機 Chrome 偵測免下載瀏覽器與 Windows 企業環境高容錯安裝（v2.4.2～v2.4.5）**：`setup-runtime.bat` 自動偵測電腦既有安裝的 Google Chrome，**自動跳過下載數百 MB 的 Playwright Chromium**（亦支援 `--install-bundled-browser` 強制安裝）；採用專案同磁碟暫存區消除跨磁碟機 `EXDEV` 錯誤；防毒軟體 `EPERM` 檔案鎖定自動重試與安全回滾；Windows Schannel 憑證撤銷查詢阻擋（curl 35）智慧降級重試，嚴格維持 SHA-256 與 SHA-512 雜湊驗證。
+7. **Python 獨立批次任務執行與 Excel 資料格支援（v2.4.6～v2.4.8）**：匯出的 Python 專案完整支援獨立批次任務執行（`run-batch.bat` / `run-batch-cdp.bat`）；原生支援 JSON、CSV 與 **Excel (`.xlsx`)** 批次資料格輸入；循序執行、每列獨立日誌與 JSON/CSV 摘要報表；支援「失敗時繼續執行 (continue) 或停止 (stop)」錯誤策略；機敏參數遮蔽保護。
+8. **【全新升級】TypeScript 獨立專案零依賴自動部署（v2.4.9～v2.5.1, v2.5.3）**：匯出的 TypeScript 專案 `start.bat` 全面進化！雙擊自動檢驗 Node.js/npm，缺少時自動下載官方固定版本 Node.js v24.13.0（含完整 npm，經 SHA-256 強校驗）解壓縮至專案內部 `runtime/node`，跳過 Chromium 下載直接使用本機 Chrome，徹底實現無痛零配置脫機自動化運行！
+9. **【全新升級】跨語言匯出登入與分頁恢復一致化（v2.5.2）**：TypeScript 與 Python 匯出器同步強化！CDP 模式優先沿用同站既有分頁，遇到網站保護轉址時於當前視窗等待人工登入後自動恢復原目標路由，杜絕重複開啟多餘登入頁與無限迴圈；Selenium 點擊後智慧等待新分頁元素並安全切換，絕不重複重播具副作用的點擊。
 
 本倉庫為 **Windows 可攜版（Portable Edition）**，無須在作業系統預先安裝 Node.js 或建置全域環境，開箱即可透過獨立執行檔一鍵初始化與啟動。
 
@@ -33,7 +36,7 @@
   - [2. 瀏覽器工作站與三種連線模式](#2-瀏覽器工作站與三種連線模式)
   - [3. 完整 29 種動作元件、原生 PDF 與定期自動重新整理](#3-完整-29-種動作元件原生-pdf-與定期自動重新整理)
   - [4. 網頁資料擷取與原生彙整文件產製 (Word / Excel / JSON)](#4-網頁資料擷取與原生彙整文件產製-word--excel--json)
-  - [5. CDP 登入狀態安全共用與免技術自動辨識](#5-cdp-登入狀態安全共用與免技術自動辨識)
+  - [5. CDP 登入狀態安全共用與免技術自動辨識 (含 v2.5.4 面板優化)](#5-cdp-登入狀態安全共用與免技術自動辨識-含-v254-面板優化)
   - [6. 管理瀏覽器人工驗證恢復與 Cloudflare 暫停機制](#6-管理瀏覽器人工驗證恢復與-cloudflare-暫停機制)
   - [7. 批次任務與 1–3 筆多工並行隔離](#7-批次任務與-13-筆多工並行隔離)
   - [8. AI 流程助理與站台探索 (Site Explorer)](#8-ai-流程助理與站台探索-site-explorer)
@@ -41,9 +44,11 @@
   - [10. 專案匯入、五大多元發布格式與發布管理](#10-專案匯入五大多元發布格式與發布管理)
   - [11. Python 雙引擎獨立專案與自動化環境管理 (v2.3.x)](#11-python-雙引擎獨立專案與自動化環境管理-v23x)
   - [12. 下載副檔名智慧保留、動作隔離暫存與 CRX 產物驗證 (v2.4.0～v2.4.1)](#12-下載副檔名智慧保留動作隔離暫存與-crx-產物驗證-v240v241)
-  - [13. 【全新】Python 獨立批次任務與 Excel 資料格執行 (v2.4.6～v2.4.8)](#13-全新python-獨立批次任務與-excel-資料格執行-v246v248)
-  - [14. 【全新】智慧瀏覽器偵測與環境高容錯初始化 (v2.4.2～v2.4.5)](#14-全新智慧瀏覽器偵測與環境高容錯初始化-v242v245)
-  - [15. Playwright MCP 工具與相容模組](#15-playwright-mcp-工具與相容模組)
+  - [13. Python 獨立批次任務與 Excel 資料格執行 (v2.4.6～v2.4.8)](#13-python-獨立批次任務與-excel-資料格執行-v246v248)
+  - [14. 智慧瀏覽器偵測與環境高容錯初始化 (v2.4.2～v2.4.5)](#14-智慧瀏覽器偵測與環境高容錯初始化-v242v245)
+  - [15. 【全新】TypeScript 獨立專案零依賴自動部署 (v2.4.9～v2.5.3)](#15-全新typescript-獨立專案零依賴自動部署-v249v253)
+  - [16. 【全新】跨語言匯出登入與分頁恢復一致化 (v2.5.2)](#16-全新跨語言匯出登入與分頁恢復一致化-v252)
+  - [17. Playwright MCP 工具與相容模組](#17-playwright-mcp-工具與相容模組)
 - [三、建議標準操作流程](#三建議標準操作流程)
 - [四、重要注意事項與最佳實踐](#四重要注意事項與最佳實踐)
 - [五、目錄架構與檔案儲存](#五目錄架構與檔案儲存)
@@ -165,7 +170,7 @@ OPENAI_API_KEY=
   - **自動追蹤與獨立執行**：產製的文件自動輸出至下載目錄並登記於執行紀錄成果清單；匯出獨立 TypeScript 與 Python 專案時亦包含完整產檔支援。
   - **隨附範例**：根目錄 `examples/web-data-documents-example-1.0.0.zip` 提供即匯即用的資料擷取與文件產製範本。
 
-### 5. CDP 登入狀態安全共用與免技術自動辨識
+### 5. CDP 登入狀態安全共用與免技術自動辨識 (含 v2.5.4 面板優化)
 - **CDP 登入狀態安全封存 (Auth State Vault)**：
   - **解決痛點**：企業或政府內部系統常包含複雜的多因素驗證 (MFA) 或圖形驗證碼，管理瀏覽器重啟時往往需重新登入。
   - **工作原理**：使用者在日常已開啟的 Chrome (CDP 模式) 完成手動登入後，系統透過 CDP 安全導出該站台的 Storage State（包含 Cookies 與 LocalStorage）。
@@ -178,7 +183,10 @@ OPENAI_API_KEY=
     - **在 Chrome 點選專屬項目**：提供直覺式備援，切換至 Chrome 視窗後直接以滑鼠點選「使用者姓名」、「登出按鈕」或管理功能，系統自動產生對應之 CSS Selector。
   - **智慧未登入對照驗證**：系統會同步啟動一個完全無 Cookie 的獨立背景對照頁進行雙向驗證，**只有「登入後看得到、未登入看不到」的特徵元素才能通過辨識**，杜絕以公開頁面元素誤判登入成功的風險。
   - **進階技術設定預設收折**：檢查網址與 CSS 規則由系統自動代入，原始技術欄位收納於進階區塊，對一般業務同仁極度友善。
-  - **隨附即用面板**：內建透過獨立 `public/auth-state-panel.js` 提供完整的登入狀態管理面板，開箱即可使用。
+- **登入共用面板體驗優化 (v2.5.4)**：
+  - 工作站設定中的「登入狀態共用」面板改為**預設收折**，點選標題即可自由展開，畫面更緊湊清晰。
+  - 修正切換「管理瀏覽器」與「CDP 接管」模式時狀態未同步的問題；在 CDP 模式下亦允許預先設定並保存共用登入偏好，實際僅在管理瀏覽器執行時套用。
+  - 加入**編輯鎖定保護**，使用者編輯中的未儲存勾選狀態不會被頁面後台的週期同步覆蓋。
 
 ### 6. 管理瀏覽器人工驗證恢復與 Cloudflare 暫停機制
 - **Cloudflare / 人工安全檢查自動暫停與恢復**：
@@ -217,7 +225,7 @@ OPENAI_API_KEY=
 - **專案匯入 UUID 隔離**：匯入專案時自動以固定長度 UUID 生成全新專案識別碼，徹底解決歷史版本附加時間戳記導致識別碼過長的問題。
 - **支援五大發布與匯出格式（可於「發布與版本」單選或複選組合產出）**：
   1. **可攜工作流程 ZIP (`portable-workflow`)**：包含流程定義、參數 Schema 與 Selector 清單，供不同 Studio 主機間匯入共用。
-  2. **獨立 TypeScript 專案 (`typescript-project`)**：導出完整的 Node.js + Playwright 腳本（內含原生 Word/Excel 產檔與資料擷取邏輯），附帶 `start.bat`，可脫離 Studio 獨立排程執行。
+  2. **獨立 TypeScript 專案 (`typescript-project`)**：全新升級自包含一鍵式執行器（內建 `start.bat` 自動環境診斷、Node.js 補齊與 npm 修復），免預裝 Node.js。
   3. **獨立 Python · Playwright 專案 (`python-playwright-project`)**：輕量化 Python 源碼專案，含單筆執行（`run.bat` / `run-cdp.bat`）與獨立批次執行（`run-batch.bat` / `run-batch-cdp.bat`）。
   4. **獨立 Python · Selenium 專案 (`python-selenium-project`)**：適用於企業政策限制 Node.js 的純 Python 環境，使用 Selenium 原生自動化，同樣支援單筆與獨立批次。
   5. **Agent `SKILL.md` 規格 (`automation-skill`)**：產出符合 Claude、Gemini 或其他 AI Agent 呼叫的自動化工具規格與參數 Markdown 對照表。
@@ -261,7 +269,7 @@ OPENAI_API_KEY=
   - 若流程預期下載 Excel / PDF 報表，但網站實際僅回傳登入失效或系統錯誤的 HTML 頁面，步驟會立即明確失敗，絕不偽裝成成功下載。
   - 異常或未通過驗證的檔案會留置於 `.local/download-staging/` 並在日誌輸出 `[DOWNLOAD-QUARANTINE]` 診斷訊息，**只有通過驗證之預期成果才會移交至正式的 `downloads/` 目錄**。
 
-### 13. 【全新】Python 獨立批次任務與 Excel 資料格執行 (v2.4.6～v2.4.8)
+### 13. Python 獨立批次任務與 Excel 資料格執行 (v2.4.6～v2.4.8)
 - **獨立脫機批次執行架構 (`batch_runner.py`)**：
   - 匯出的 Python Playwright 與 Selenium 專案現在內建完整的批次執行引擎，無需開啟 Studio 伺服器即可直接批次自動化運行。
   - 隨附快速啟動腳本：
@@ -284,7 +292,7 @@ OPENAI_API_KEY=
   - 批次匯出時需使用者主動勾選才納入當前資料列，**機敏密碼參數一律自動遮蔽**。
   - 每筆資料列執行完畢後立即安全刪除該列的臨時參數檔案，杜絕殘留機敏內容。
 
-### 14. 【全新】智慧瀏覽器偵測與環境高容錯初始化 (v2.4.2～v2.4.5)
+### 14. 智慧瀏覽器偵測與環境高容錯初始化 (v2.4.2～v2.4.5)
 - **智慧 Google Chrome 偵測與免下載 Chromium (v2.4.4)**：
   - `setup-runtime.bat` 執行時會自動搜尋本機標準安裝路徑（含 Program Files 與使用者 LocalAppData）及環境變數（`CHROME_PATH`）。
   - **只要本機已安裝 Chrome，自動跳過下載龐大的 Playwright Chromium**（節省數百 MB 下載流量與解壓縮等待時間）。
@@ -301,7 +309,33 @@ OPENAI_API_KEY=
   - Windows Defender 或本機索引服務常在解壓縮目錄後短暫鎖定檔案，引發 `EPERM` / `EACCES` / `EBUSY` 錯誤。
   - 安裝器內建階梯式重試（100ms/250ms/500ms），若鎖定持續則自動降級為目錄複製；若更新失敗自動復原舊版備份，絕不留下損壞的依賴環境。
 
-### 15. Playwright MCP 工具與相容模組
+### 15. 【全新】TypeScript 獨立專案零依賴自動部署 (v2.4.9～v2.5.3)
+- **零配置一鍵自動運行 (`start.bat`)**：
+  - 匯出的 TypeScript 專案不再要求使用者電腦預先安裝 Node.js 或建置全域開發環境。
+  - 雙擊執行 `start.bat` 時，腳本自動進行完整的本機環境診斷：
+    1. 優先檢驗本機既有之 `node.exe` 與 `npm.cmd`（透過 `--version` 與語法相容性驗證）。
+    2. 若系統無可用環境或缺少 npm，**自動自 Node.js 官方站台下載固定版本之 Node.js v24.13.0 Windows x64 完整壓縮包（內含 npm）**。
+    3. 下載後透過 PowerShell 自動進行 **SHA-256 強制雜湊比對**（`CA2742695BE8DE44027D71B3F53A4BDB36009B95575FE1AE6F7F0B5CE091CB88`），確保二進位檔案安全無虞。
+    4. 自動解壓縮至專案內部目錄 `runtime/node`，完全無需系統管理員權限，後續啟動直接重用。
+- **npm 路徑修復與候選挑選 (v2.5.1)**：
+  - 嚴格迭代與驗證系統中的 npm 候選項，排除專案依賴樹內部誤判的 `node_modules\npm`，確保選取到的 `npm.cmd` 配有正確可用的 `npm-cli.js`。
+- **免下載 Chromium 原生使用本機 Chrome**：
+  - 啟動時自動設定 `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`，直接重用電腦已安裝的 Google Chrome，大幅減少首次啟動時下載瀏覽器的等待時間。
+- **暫存與快取隔離**：
+  - 暫存目錄設於 `.local\setup-temp`，npm 快取設於 `.local\npm-cache`，不污染全域環境，並具備企業網路 TLS 撤銷錯誤自動重試防護。
+
+### 16. 【全新】跨語言匯出登入與分頁恢復一致化 (v2.5.2)
+- **同站分頁優先沿用與杜絕重開 (`authNavigation.ts`)**：
+  - TypeScript 與 Python 匯出專案在 CDP 模式下，自動掃描並優先選取已開啟的同站網頁分頁，**不再只因登入專屬 CSS 尚未出現就盲目重複開啟新分頁**。
+  - CDP Chrome 首次啟動預設使用 `about:blank`，徹底避免啟動與工作流程執行時各自開啟一次登入入口。
+- **轉址等候人工登入與原路由自動恢復**：
+  - 當存取受保護路由被網站強制轉址至登入頁時，執行器會在當前 Chrome 視窗等候使用者人工完成驗證（包含圖形驗證碼、MFA 或 Cloudflare）。
+  - 偵測到登入成功後，系統會**自動重新導向恢復至原始目標路由**，徹底解決因轉址造成登入成功但找不到目標元素的無限迴圈問題。
+- **Selenium 跨分頁智慧等待與副作用防護**：
+  - 點擊操作後，若緊接著的資料擷取步驟指定了可見元素等待條件，Selenium 會自動在本次點擊新增或重新導向的分頁中尋找相符內容。
+  - 若逾時找不到相符內容，系統會輸出清楚的分頁診斷摘要並安全停止，**絕不重複重播可能已產生副作用的點擊、送出或下載操作**。
+
+### 17. Playwright MCP 工具與相容模組
 - **標準 MCP 伺服器**：位於 [src/mcp/server.ts](src/mcp/server.ts)，對外提供任務型工具介面（建立下載任務、查詢下載狀態、取得結果）。
 - **EBAS 相容模組**：預算報表模組保留於 `/legacy/` 路徑，可透過 `start-ebas-ui.bat` 獨立啟動。
 
@@ -325,7 +359,7 @@ graph TD
     J -- 否 --> E
     J -- 是 --> K["5. 選擇執行或發布方式"]
     K --> L[" Studio 批次並行 1~3 (自動沿用 Session)"]
-    K --> M[" 匯出獨立 TypeScript 專案 (Playwright)"]
+    K --> M[" 匯出獨立 TypeScript 專案 (雙擊 start.bat 零配置自動部署)"]
     K --> N[" 匯出獨立 Python 專案 (Playwright / Selenium)"]
     N --> O["單筆執行：run.bat / run-cdp.bat"]
     N --> P["獨立批次：run-batch.bat / run-batch-cdp.bat (支援 JSON/CSV/XLSX)"]
@@ -334,7 +368,7 @@ graph TD
 1. **建立專案**：在專案總覽點擊新增專案，填入專案名稱、起始網址與允許網域（Allowlist）。
 2. **登入準備**：
    - *一般模式*：至「網站與工作站」啟動隨附 Chromium 完成網站登入。
-   - *CDP 共用模式*：使用日常 Chrome 登入後，至「登入狀態共用」點選分頁並點擊「**自動辨識**」，輸入密語加密保存；於管理瀏覽器啟用保存狀態並解鎖。
+   - *CDP 共用模式*：使用日常 Chrome 登入後，至「登入狀態共用」展開面板點選分頁並點擊「**自動辨識**」，輸入密語加密保存；於管理瀏覽器啟用保存狀態並解鎖。
 3. **流程設計**：使用錄製器記錄操作，或使用 AI 探索自動生成步驟，亦可自 29 種動作元件中手動拖曳設定。
 4. **資料擷取與產檔**：
    - 加入「**擷取網頁資料**」步驟（選取清單/表格、欄位、追加至集合）。
@@ -346,6 +380,7 @@ graph TD
 7. **發布成果與獨立運行**：
    - 於「執行紀錄」下載產製的 Word/Excel/JSON 成果文件。
    - 至「發布與版本」選擇匯出**可攜工作流程 ZIP**、**獨立 TypeScript 專案**、**Python · Playwright 專案**、**Python · Selenium 專案**或 **Agent SKILL.md**。
+   - **TypeScript 專案執行**：直接雙擊 `start.bat`，腳本會自動檢測/下載 Node.js 與 npm，安裝套件並直接啟動 Chrome 執行，實現完全脫機免安裝。
    - **Python 專案執行**：
      - 單筆流程：雙擊 `run.bat`（一般）或 `run-cdp.bat`（CDP 接管）。
      - 獨立批次：雙擊 `run-batch.bat` 或 `run-batch-cdp.bat`，可直接指定 JSON、CSV 或 Excel (`.xlsx`) 參數檔案進行整批執行，支援失敗時繼續/停止策略。
@@ -365,18 +400,21 @@ graph TD
    - 擷取重複清單時，請確保列 Selector (Row Selector) 具備唯一性與穩定性。
    - 單次擷取筆數建議控制在 5,000 筆以內，整趟流程建議不超過 50,000 筆。
    - 產製之 Word (`.docx`) 與 Excel (`.xlsx`) 為標準本機 Open XML 結構，相容於 Microsoft Office、WPS Office 與 LibreOffice。
-4. **Python 匯出專案執行規範**：
+4. **TypeScript 匯出專案執行規範**：
+   - 雙擊 `start.bat` 時會自動進行環境檢查與必要依賴安裝；若本機無 Node.js，將自動安全下載官方固定版至專案目錄內部，無須系統管理員權限。
+   - 預設跳過 Chromium 下載並自動使用電腦既有的 Google Chrome。
+5. **Python 匯出專案執行規範**：
    - **Python 環境**：需 Windows 64-bit 環境並安裝 Python 3.10+ 與 Google Chrome。
    - **虛擬環境管理**：`run.bat` 與 `run-batch.bat` 會在專案目錄 `.local/python-env` 建立虛擬環境，無須管理員權限；若需離線安裝，可將預先下載之 wheel 放置於專案 `wheelhouse/` 目錄中。
    - **Profile 獨佔原則**：同一個 Chrome Profile 目錄切勿同時由多個程序開啟，否則會發生鎖定錯誤；多工任務請使用獨立工作站目錄。
    - **批次 Excel 輸入注意**：Excel (`.xlsx`) 檔案第一列必須為參數 key 名稱（需與流程定義之參數名稱完全一致）；可直接複製匯出包內的 `batch.example.csv` 作為範本。
    - **下載產物隔離**：下載過程中非預期檔案會留置於 `.local/download-staging/` 並標記 `[DOWNLOAD-QUARANTINE]`，請定期檢視與清理。
-5. **機敏資訊保護**：
+6. **機敏資訊保護**：
    - 帳號密碼等資料請在「參數管理」中標記為「**機敏參數**」。機敏參數不會寫入一般日誌，匯出時自動清空。
-6. **請求頻率與防封鎖策略**：
+7. **請求頻率與防封鎖策略**：
    - 避免將步驟間延遲設為 0；預設每步 800ms 能維持穩定互動。
    - 目標網站若有單一帳號連線限制，請保持「同時執行數 = 1」，切勿冒然開啟高並行。
-7. **企業網路憑證**：
+8. **企業網路憑證**：
    - 若遇到 SSL 檢驗失敗，請確認是否已透過系統 CA 信任庫運作（`NODE_USE_SYSTEM_CA=1`），切勿在正式環境關閉 TLS 驗證。
 
 ---
@@ -392,7 +430,10 @@ automation-studio-generic-portable/
 ├── start-ebas-ui.bat                      # 啟動 EBAS 舊版相容介面
 ├── PORTABLE-WINDOWS.md                    # 可攜版執行與網路修復指南
 ├── PYTHON-EXPORT-README.zh-TW.md          # Python 雙引擎與批次匯出說明
-├── VERSION                                # 系統版本標記檔 (2.4.8)
+├── TYPESCRIPT-NODE-NPM-RECOVERY-v2.5.3.md # TypeScript 匯出 Node/npm 自動部署修復說明
+├── AUTH-EXPORT-RECOVERY-V2.5.2.zh-TW.md   # 登入與分頁恢復一致性說明
+├── AUTH-SHARING-PANEL-v2.5.4.md           # 登入狀態共用面板優化說明
+├── VERSION                                # 系統版本標記檔 (2.5.4)
 ├── VERSIONING.md                          # 版本號規範與里程碑說明
 ├── CHANGELOG.md                           # 集中版本變更歷史紀錄
 ├── AGENTS.md                              # Playwright MCP 架構助手角色規範
@@ -411,6 +452,7 @@ automation-studio-generic-portable/
 │   │   ├── managedAuthRecovery.ts         # 管理瀏覽器人工驗證暫停與恢復
 │   │   ├── webData.ts                     # 網頁資料擷取與 Word/Excel/JSON 原生產製
 │   │   ├── exporter.ts                    # 多元專案匯出服務 (TS / Python / Batch / Skill)
+│   │   ├── templates/                     # 匯出專案模板 (含 TypeScript start.bat 與 authNavigation)
 │   │   └── python-runtime/                # Python 雙引擎執行器與相容性支援模組
 │   │       ├── runner.py                  # Python 單筆流程進入點
 │   │       ├── batch_runner.py            # Python 獨立批次執行器 (JSON/CSV/XLSX)
@@ -431,6 +473,7 @@ automation-studio-generic-portable/
 │   └── portable-runtime-packages.json     # 固定版本之 npm 依賴套件雜湊表
 ├── .local/                                # 本機暫存與環境目錄（不進入 Git）
 │   ├── setup-temp/                        # 安裝暫存目錄（同磁碟區避免 EXDEV 錯誤）
+│   ├── npm-cache/                         # 匯出專案專屬之 npm 依賴快取
 │   ├── download-staging/                  # 下載動作暫存捕捉與隔離檢驗目錄
 │   ├── batch-runs/                        # Python 獨立批次執行紀錄與摘要報表
 │   └── python-env/                        # Python 專案自動建立之隔離虛擬環境

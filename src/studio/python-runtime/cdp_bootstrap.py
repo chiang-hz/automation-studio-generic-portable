@@ -117,7 +117,7 @@ def start_chrome(executable, endpoint, project):
     profile.mkdir(parents=True, exist_ok=True)
     port = urlsplit(endpoint).port
     cmd = [executable, '--remote-debugging-address=127.0.0.1', f'--remote-debugging-port={port}',
-           '--user-data-dir=' + str(profile), '--no-first-run', '--new-window', login_start_url(project)]
+           '--user-data-dir=' + str(profile), '--no-first-run', '--new-window', 'about:blank']
     print('[CDP] Starting installed Chrome (persistent login profile):', str(profile), flush=True)
     try:
         # Chrome continues running after the one-click Python launcher exits.

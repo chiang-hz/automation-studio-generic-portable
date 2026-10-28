@@ -1,0 +1,1 @@
+TypeScript export start.bat: system Node/npm preferred; otherwise official Node v24.13.0 Windows x64 bundle (npm included), pinned SHA256. Browser uses Chrome. Run start.bat directly. The TLS fallback weakens trust for that one transfer; fixed digest check required. Windows x64 and PowerShell Expand-Archive required.

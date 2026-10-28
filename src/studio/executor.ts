@@ -8,6 +8,7 @@ import { createId, StudioStore } from "./store.ts";
 import { browserLaunchMessage, DESKTOP_VIEWPORT, resolveStudioBrowser } from "./browser.ts";
 import { connectToCdpBrowser } from "./cdp.ts";
 import { AuthSessionManager } from "./authSessions.ts";
+import { isPotentialLoginUrl, isRequestedUrlAlreadyOpen, scoreExistingSiteTab } from "./authNavigation.ts";
 import { ensureManagedAuthentication } from "./managedAuthRecovery.ts";
 import { ensurePdfDownloadPreference, resolveProjectProfileDir, resolveBatchWorkerProfileDir } from "./profile.ts";
 import { effectiveBatchConcurrency, MAX_BATCH_CONCURRENCY } from "./concurrency.ts";
@@ -299,7 +300,7 @@ export class WorkflowRunner {
         const playwright = await loadPlaywright();
         const chromium = await prepareStudioChromium(playwright, project.browser);
         if (project.browser.connectionMode === "cdp") {
-          const attached = await connectToCdpBrowser(playwright, project.browser);
+          const attached = await connectToCdpBrowser(playwright, project.browser, project.targetUrl);
           browser = attached.browser;
           context = attached.context;
           page = attached.page;
@@ -536,13 +537,21 @@ export class WorkflowRunner {
       await appendEvent(run.debugDir, "step_started", { stepId: step.id, name: step.name, kind: step.kind, attempt });
       try {
         await waitForManualVerification(page, run.debugDir, project.browser.headless);
-        await applyWait(page, step.waitBefore, run.parameters, variables, step.autoFrameSearch === true);
-        const output = await this.performStep(project, run, context, page, step, variables);
+        if (step.kind === "extractWebData" && getTabState(context).pendingClickTabs) {
+          await resolveExpectedTabAfterClick(context, step, project, run.debugDir, run.parameters, variables);
+        } else if (step.kind !== "click") {
+          getTabState(context).pendingClickTabs = undefined;
+        }
+        await applyWaitWithCdpAuth(context, getActivePage(context, page), step.waitBefore, project, run.debugDir, run.parameters, variables, step.autoFrameSearch === true);
+        const currentForAction = getActivePage(context, page);
+        const output = await this.performStep(project, run, context, currentForAction, step, variables);
         // A tab-control step may change the active page. Always continue checks
         // against the page selected by the shared tab state.
-        const currentPage = getActivePage(context, page);
-        const activePage = !isPageClosed(currentPage);
-        if (activePage && step.kind !== "wait") await applyWait(currentPage, step.waitAfter, run.parameters, variables, step.autoFrameSearch === true);
+        let currentPage = getActivePage(context, page);
+        let activePage = !isPageClosed(currentPage);
+        if (activePage && step.kind !== "wait") await applyWaitWithCdpAuth(context, currentPage, step.waitAfter, project, run.debugDir, run.parameters, variables, step.autoFrameSearch === true);
+        currentPage = getActivePage(context, page);
+        activePage = !isPageClosed(currentPage);
         if (activePage) {
           await assertNoRecentRateLimit(currentPage);
           await waitForManualVerification(currentPage, run.debugDir, project.browser.headless);
@@ -564,7 +573,7 @@ export class WorkflowRunner {
         }
         if (project.settings.screenshotMode === "everyStep") {
           result.screenshotPath = path.join(run.debugDir, `${String(run.completedSteps + 1).padStart(3, "0")}-${safeFile(step.name)}.png`);
-          await page.screenshot({ path: result.screenshotPath, fullPage: true }).catch(() => undefined);
+          await currentPage.screenshot({ path: result.screenshotPath, fullPage: true }).catch(() => undefined);
         }
         result.endedAt = new Date().toISOString();
         result.durationMs = Date.parse(result.endedAt) - Date.parse(result.startedAt);
@@ -582,7 +591,12 @@ export class WorkflowRunner {
         await appendEvent(run.debugDir, "step_failed", { stepId: step.id, attempt, message: result.message });
         await this.store.saveRun(run);
         const verificationVisible = !isPageClosed(page) && await isHumanVerificationPage(page).catch(() => false);
+        // A click/submit/download may already have taken effect when a later
+        // wait fails. Never replay those side-effecting actions automatically.
+        const noReplay = new Set(["click", "dblclick", "press", "download", "upload", "script", "saveDocument", "savePagePdf"]);
         const canRetry = attempt <= retries
+          && !noReplay.has(step.kind)
+          && !/AUTH_INVALID|AUTH_TIMEOUT|AUTH_REQUIRED|TAB_AMBIGUOUS|TAB_RESULT_TIMEOUT/.test(String(error))
           && !isHumanVerificationError(error)
           && !isRateLimitError(error)
           && !verificationVisible
@@ -685,9 +699,11 @@ export class WorkflowRunner {
     if (step.kind === "navigate") {
       const url = expand(step.url || String(step.value || project.targetUrl));
       assertAllowedUrl(url, project.allowedDomains);
+      getTabState(context).lastProtectedUrl = url;
       if (samePageUrl(page.url(), url)) return { message: `已在目標網址，沿用目前頁面：${url}` };
       await page.goto(url, { waitUntil: "domcontentloaded", timeout });
-      if (/^https?:/i.test(page.url())) assertAllowedUrl(page.url(), project.allowedDomains, `導向後網址 ${page.url()}`);
+      const resumed = await recoverCdpLoginIfNeeded(context, page, project, run.debugDir, url);
+      if (/^https?:/i.test(resumed.url())) assertAllowedUrl(resumed.url(), project.allowedDomains, `導向後網址 ${resumed.url()}`);
       if (project.settings.safePlayback !== false) await waitForPageSettled(page, timeout);
       return { message: `已開啟 ${url}` };
     }
@@ -917,7 +933,13 @@ export class WorkflowRunner {
     }
     const humanized = project.settings.humanizedPlayback === true;
     if (step.kind !== "upload") await prepareInteraction(locator, page, timeout, project.settings.safePlayback !== false, humanized);
-    if (step.kind === "click") await locator.click({ timeout });
+    if (step.kind === "click") {
+      if (project.browser.connectionMode === "cdp") {
+        const currentPages = (context.pages?.() ?? []).filter((item: any) => !isPageClosed(item));
+        getTabState(context).pendingClickTabs = { origin: page, pages: new Map(currentPages.map((item: any) => [item, String(item.url())])) };
+      }
+      await locator.click({ timeout });
+    }
     else if (step.kind === "dblclick") await locator.dblclick({ timeout });
     else if (step.kind === "fill") await fillLocator(locator, expand(step.value), timeout, humanized);
     else if (step.kind === "select") await locator.selectOption(expand(step.value));
@@ -1942,6 +1964,120 @@ async function waitForNewFirstItem(page: any, step: WorkflowStep, parameters: Re
   throw new Error(`等待第一筆新資料逾時：目前第一筆仍未與基準資料不同${patternLabel}。最後讀到：${lastText || "(無)"}`);
 }
 
+/** Adopt only a fresh result tab containing the next extraction's explicit wait selector.
+ * Never replay the preceding click or adopt a stale tab based only on its URL. */
+async function resolveExpectedTabAfterClick(context: any, step: WorkflowStep, project: WorkflowProject, debugDir: string,
+  parameters: Record<string, string | boolean>, variables: Record<string, string | boolean>): Promise<void> {
+  const state = getTabState(context);
+  const pending = state.pendingClickTabs;
+  state.pendingClickTabs = undefined;
+  const rule = step.waitBefore;
+  if (!pending || rule?.kind !== "visible" || !rule.value) return;
+  const selector = stabilizeRecordedCssSelector(interpolate(rule.value, parameters, variables));
+  const timeout = rule.timeoutMs ?? step.timeoutMs ?? project.browser.defaultTimeoutMs;
+  const deadline = Date.now() + timeout;
+  let lastTabs = "";
+  while (Date.now() < deadline) {
+    const pages = (context.pages?.() ?? []).filter((page: any) => !isPageClosed(page));
+    const candidates = pages.filter((page: any) => page === pending.origin || !pending.pages.has(page) || pending.pages.get(page) !== page.url());
+    const matches: any[] = [];
+    for (const candidate of candidates) {
+      try {
+        const url = String(candidate.url());
+        if (!/^https?:/i.test(url)) continue;
+        assertAllowedUrl(url, project.allowedDomains);
+        if (isPotentialLoginUrl(url)) continue;
+        const scopes = step.autoFrameSearch ? [candidate, ...(candidate.frames?.() ?? []).filter((f: any) => f !== candidate.mainFrame?.())] : [candidate];
+        for (const scope of scopes) {
+          if (await scope.locator(selector).first().isVisible().catch(() => false)) { matches.push(candidate); break; }
+        }
+      } catch { /* closed tab or inaccessible site */ }
+    }
+    if (matches.length > 1) throw new Error("TAB_AMBIGUOUS: 多個新結果分頁同時符合擷取元素；請設定更精確的 waitBefore CSS。");
+    if (matches.length === 1) {
+      state.active = matches[0];
+      await appendEvent(debugDir, "cdp_result_tab_adopted", { url: safeAuthUrl(matches[0].url()), fromPopup: matches[0] !== pending.origin });
+      return;
+    }
+    lastTabs = pages.map((item: any) => safeAuthUrl(item.url())).join(" | ");
+    await delay(300);
+  }
+  throw new Error(`TAB_RESULT_TIMEOUT: 點擊後未在新舊目標分頁找到指定擷取元素；分頁：${lastTabs}`);
+}
+
+/** Recover only a site-requested login, not a missing CSS selector.
+ * This is a same-session, user-driven checkpoint; it cannot bypass MFA or a challenge. */
+async function recoverCdpLoginIfNeeded(context: any, page: any, project: WorkflowProject, debugDir: string, resumeTarget?: string): Promise<any> {
+  if (project.browser.connectionMode !== "cdp" || project.browser.authStateEnabled !== true) return page;
+  const state = getTabState(context);
+  const verifyUrl = String(project.browser.authVerifyUrl || project.targetUrl || "");
+  const loginVisible = async (candidate: any): Promise<boolean> => {
+    if (isPotentialLoginUrl(String(candidate.url?.() ?? ""))) return true;
+    try { return await candidate.locator('input[type="password"]:visible,iframe[src*="turnstile"],iframe[src*="recaptcha"]').count() > 0; }
+    catch { return false; }
+  };
+  const currentUrl = String(page.url?.() ?? "");
+  const errorPage = /^\/(?:404|403|401|error)\/?$/i.test((() => { try { return new URL(currentUrl).pathname; } catch { return ""; } })());
+  const siteLoginPeer = errorPage && (context.pages?.() ?? []).some((candidate: any) => candidate !== page && isPotentialLoginUrl(String(candidate.url?.() ?? "")));
+  if (!(await loginVisible(page)) && !siteLoginPeer) return page;
+  if (state.authRecovered) throw new Error("AUTH_INVALID: 登入後網站再次要求登入，已停止以避免重複登入。");
+  if (project.browser.headless) throw new Error("AUTH_REQUIRED: 此網站需要可見 Chrome 完成人工登入。" );
+  state.authRecovered = true;
+  const initial = new Map<any, string>((context.pages?.() ?? []).filter((p: any) => !p.isClosed?.()).map((p: any) => [p, String(p.url?.() ?? "")]));
+  await appendEvent(debugDir, "cdp_login_required", { url: safeAuthUrl(currentUrl), openTabs: initial.size });
+  const deadline = Date.now() + 180_000;
+  let stable = 0;
+  let selected: any;
+  while (Date.now() < deadline) {
+    const tabs = (context.pages?.() ?? []).filter((p: any) => !p.isClosed?.());
+    const candidates = tabs.filter((candidate: any) => scoreExistingSiteTab(String(candidate.url?.() ?? ""), verifyUrl) >= 10);
+    const currentValid = candidates.includes(page) && !(await loginVisible(page));
+    const fresh = candidates.filter((candidate: any) => candidate !== page && (!initial.has(candidate) || initial.get(candidate) !== candidate.url()));
+    selected = currentValid ? page : fresh.find((candidate: any) => resumeTarget && isRequestedUrlAlreadyOpen(candidate.url(), resumeTarget))
+      ?? fresh.sort((a: any, b: any) => scoreExistingSiteTab(b.url(), verifyUrl) - scoreExistingSiteTab(a.url(), verifyUrl))[0];
+    if (selected) { stable++; if (stable >= 3) break; } else stable = 0;
+    await delay(700);
+  }
+  if (!selected || stable < 3) throw new Error("AUTH_TIMEOUT: 在 CDP Chrome 等待人工登入已達 180 秒；請確認在同一 Chrome 工作階段登入。");
+  state.active = selected;
+  selected.setDefaultTimeout?.(project.browser.defaultTimeoutMs);
+  const target = resumeTarget || state.lastProtectedUrl;
+  if (target && !isRequestedUrlAlreadyOpen(selected.url(), target)) {
+    assertAllowedUrl(target, project.allowedDomains);
+    await selected.goto(target, { waitUntil: "domcontentloaded", timeout: project.browser.defaultTimeoutMs });
+    if (await loginVisible(selected)) throw new Error("AUTH_INVALID: 人工登入後仍轉回登入頁，已停止避免登入循環。");
+  }
+  await appendEvent(debugDir, "cdp_login_resumed", { url: safeAuthUrl(selected.url()), openTabs: context.pages?.().length ?? 0 });
+  return selected;
+}
+
+function safeAuthUrl(raw: string): string {
+  try { const url = new URL(raw); return url.origin + url.pathname; }
+  catch { return String(raw).split("?")[0].split("#")[0]; }
+}
+
+/** Bounded, resumable wait for protected CDP routes; no retry of click/submit actions. */
+async function applyWaitWithCdpAuth(context: any, page: any, rule: WorkflowStep["waitAfter"], project: WorkflowProject,
+  debugDir: string, parameters: Record<string, string | boolean>, variables: Record<string, string | boolean>, autoFrameSearch = false): Promise<void> {
+  if (!rule) return;
+  if (project.browser.connectionMode !== "cdp" || project.browser.authStateEnabled !== true || !["visible", "attached", "url"].includes(rule.kind)) {
+    await applyWait(page, rule, parameters, variables, autoFrameSearch); return;
+  }
+  let deadline = Date.now() + (rule.timeoutMs ?? project.browser.defaultTimeoutMs);
+  while (Date.now() < deadline) {
+    const current = getActivePage(context, page);
+    const recovered = await recoverCdpLoginIfNeeded(context, current, project, debugDir);
+    if (recovered !== current) deadline = Date.now() + (rule.timeoutMs ?? project.browser.defaultTimeoutMs);
+    const slice = Math.min(1000, Math.max(100, deadline - Date.now()));
+    try { await applyWait(getActivePage(context, page), {...rule, timeoutMs: slice}, parameters, variables, autoFrameSearch); return; }
+    catch (error) {
+      if (!/timeout|逾時|Timeout/i.test(String(error))) throw error;
+    }
+  }
+  const current = getActivePage(context, page);
+  throw new Error(`WAIT_TIMEOUT: ${rule.kind} on ${safeAuthUrl(String(current.url()))}; selector not ready or site still loading.`);
+}
+
 async function applyWait(page: any, rule: WorkflowStep["waitAfter"], parameters: Record<string, string | boolean>, variables: Record<string, string | boolean>, autoFrameSearch = false): Promise<void> {
   if (!rule) return;
   autoFrameSearch = autoFrameSearch || rule.autoFrameSearch === true;
@@ -2281,7 +2417,8 @@ export function preflightWorkflowDomains(project: WorkflowProject, parameters: R
   return { requiredDomains, missingDomains };
 }
 
-type StudioTabState = { active: any; named: Map<string, any> };
+type StudioTabState = { active: any; named: Map<string, any>; lastProtectedUrl?: string; authRecovered?: boolean;
+  pendingClickTabs?: { origin: any; pages: Map<any, string> } };
 
 function getTabState(context: any): StudioTabState {
   if (!context.__automationStudioTabState) {
@@ -2294,6 +2431,9 @@ function getTabState(context: any): StudioTabState {
 function initializeTabState(context: any, page: any): void {
   const state = getTabState(context);
   state.active = page;
+  state.lastProtectedUrl = undefined;
+  state.authRecovered = false;
+  state.pendingClickTabs = undefined;
 }
 
 function getActivePage(context: any, fallback: any): any {

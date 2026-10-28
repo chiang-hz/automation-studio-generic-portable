@@ -117,9 +117,45 @@ class BrowserEngine:
             # downloads (for example CRX3 models named downloads.htm).
         else:
             raise ValueError('Invalid backend')
+        if self.external:
+            # Reuse the most relevant EXISTING CMS tab. CDP's first tab might be
+            # a login page, an unrelated website, or an empty startup tab.
+            # This must never create a tab or navigate to a login-check URL.
+            self._select_existing_site_tab()
         if settings.get('stealth') and not self.external:
             print('[BROWSER] Stealth plugin setting does not transfer to Python. Standard Chrome is used; human verification remains required.')
         self.tabs['initial'] = self._tab_id()
+
+    def _select_existing_site_tab(self):
+        auth_url = self.project.get('browser', {}).get('authVerifyUrl') or self.project.get('targetUrl') or ''
+        wanted = urlsplit(auth_url)
+        def score(url):
+            parsed = urlsplit(url)
+            if (parsed.scheme, parsed.hostname, parsed.port) != (wanted.scheme, wanted.hostname, wanted.port):
+                return 0
+            if parsed.path.lower().rstrip('/') in ('/404', '/403', '/401', '/error'):
+                return 0.1
+            if re.search(r'/(?:login|sign-?in|signin|sso)(?:[/?#]|$)', parsed.path, re.I):
+                return 0.5
+            return 2 if parsed.path.startswith('/dataset/provider/') else 1
+        try:
+            if self.backend == 'playwright':
+                pages = [p for p in self.context.pages if not p.is_closed()]
+                matching = sorted((p for p in pages if score(p.url)), key=lambda p: score(p.url), reverse=True)
+                if matching:
+                    self.page = matching[0]
+            else:
+                start = self.browser.current_window_handle
+                winner, highest = start, 0
+                for handle in self.browser.window_handles:
+                    self.browser.switch_to.window(handle)
+                    current_score = score(self.browser.current_url)
+                    if current_score > highest:
+                        winner, highest = handle, current_score
+                self.browser.switch_to.window(winner)
+            print('[AUTH] Reusing existing browser tab:', self.url())
+        except Exception as error:
+            print('[AUTH] Existing-tab selection unavailable:', error)
 
     def close(self):
         try:
@@ -150,6 +186,66 @@ class BrowserEngine:
 
     def url(self):
         return self.page.url if self.backend == 'playwright' else self.browser.current_url
+
+    def auth_tab_urls(self):
+        """Read all CDP tab URLs without changing the active Chrome tab.
+
+        For Selenium, Target.getTargets provides page URLs without calling
+        switch_to.window() while a person is typing in the login tab.
+        """
+        if self.backend == 'playwright':
+            return {p: p.url for p in self.context.pages if not p.is_closed()}
+        handles = list(self.browser.window_handles)
+        if not handles:
+            return {}
+        try:
+            active = self.browser.current_window_handle
+        except Exception:
+            active = handles[0]  # login callback may close the original tab
+        result = {}
+        try:
+            targets = self.browser.execute_cdp_cmd('Target.getTargets', {}).get('targetInfos', [])
+            by_id = {str(item.get('targetId', '')).lower(): str(item.get('url') or '')
+                     for item in targets if item.get('type') == 'page'}
+            for handle in handles:
+                target_id = handle.removeprefix('CDwindow-').lower()
+                if target_id in by_id:
+                    result[handle] = by_id[target_id]
+            if result:
+                # The active WebDriver URL is a useful fallback when a Chrome
+                # target is missing transiently from Target.getTargets.
+                if active not in result:
+                    result[active] = self.browser.current_url
+                return result
+        except Exception:
+            pass
+        # Compatibility fallback for a driver that cannot expose CDP targets.
+        # Restore the starting window even if another tab has disappeared.
+        try:
+            for handle in handles:
+                try:
+                    self.browser.switch_to.window(handle)
+                    result[handle] = self.browser.current_url
+                except Exception:
+                    continue
+        finally:
+            if active in self.browser.window_handles:
+                self.browser.switch_to.window(active)
+        return result
+
+    def select_auth_tab(self, tab_id):
+        """Adopt the tab in which the website completed manual authentication."""
+        if self.backend == 'playwright':
+            if tab_id.is_closed():
+                raise RuntimeError('AUTH_TAB_CLOSED: authenticated browser tab was closed')
+            self.page = tab_id
+            self.page.set_default_timeout(int(self.project['browser'].get('defaultTimeoutMs', 30000)))
+        else:
+            if tab_id not in self.browser.window_handles:
+                raise RuntimeError('AUTH_TAB_CLOSED: authenticated browser tab was closed')
+            self.browser.switch_to.window(tab_id)
+        self._frame_scope = None
+        self._active_dropdown_trigger = None
 
     def goto(self, url):
         self._frame_scope = None

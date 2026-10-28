@@ -27,7 +27,7 @@ export class ExportService {
       name: "EXPORT-MANIFEST.json",
       data: json({
         product: "Automation Studio",
-        productVersion: "2.4.6",
+        productVersion: "2.5.2",
         exportedAt: new Date().toISOString(),
         projectId: project.id,
         projectVersion: project.version,
@@ -82,6 +82,7 @@ async function typescriptEntries(project: WorkflowProject, selection: ExportSele
   const base = "typescript-project";
   const templatePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "templates", "generated-runner.ts.txt");
   const runner = await fs.readFile(templatePath, "utf8");
+  const tsStarter = await fs.readFile(new URL("./templates/typescript-start.bat.txt", import.meta.url), "utf8");
   const stealthHelper = await fs.readFile(new URL("./stealth.ts", import.meta.url), "utf8");
   const webDataHelper = await fs.readFile(new URL("./webData.ts", import.meta.url), "utf8");
   const zipHelper = await fs.readFile(new URL("./zip.ts", import.meta.url), "utf8");
@@ -93,8 +94,9 @@ async function typescriptEntries(project: WorkflowProject, selection: ExportSele
     { name: `${base}/src/workflow.json`, data: json(project) },
     { name: `${base}/src/run.ts`, data: runner },
     { name: `${base}/src/stealth.ts`, data: stealthHelper },
+    { name: `${base}/src/authNavigation.ts`, data: await fs.readFile(path.join(path.dirname(templatePath), "authNavigation.ts.txt"), "utf8") },
     { name: `${base}/src/parameters.ts`, data: generatedParameterTypes(project) },
-    { name: `${base}/start.bat`, data: "@echo off\r\nsetlocal\r\nif \"%NODE_USE_SYSTEM_CA%\"==\"\" set \"NODE_USE_SYSTEM_CA=1\"\r\nnode --experimental-strip-types src\\run.ts\r\nif errorlevel 1 pause\r\n" },
+    { name: `${base}/start.bat`, data: tsStarter.replace(/\n/g, "\r\n") },
     { name: `${base}/README.md`, data: typescriptReadme(project) }
   ];
   if (selection.includeExamples) entries.push({ name: `${base}/parameters.example.json`, data: json(exampleParameters(project)) });
@@ -327,7 +329,7 @@ function portableReadme(project: WorkflowProject): string {
 }
 
 function typescriptReadme(project: WorkflowProject): string {
-  return `# ${project.name}\n\n這是由 Automation Studio 產生的 Playwright TypeScript 專案。\n\n1. 準備 Node.js，於此目錄執行 \`npm install\` 安裝 package.json 所列套件（啟用 Stealth 的管理模式會包含插件）。\n2. 將參數放入 \`parameters.json\`，或沿用預設值。\n3. 執行 \`start.bat\`。\n\nStealth 設定保存於 src/workflow.json 的 browser.stealth；僅管理模式生效，CDP 不套用。設定在瀏覽器啟動前載入。\n\n登入驗證、MFA 與驗證碼仍須人工完成。\n`;
+  return `# ${project.name}\n\nAutomation Studio Playwright TypeScript 匯出專案。\n\n1. 直接雙擊 \`start.bat\`。此檔會自動檢查及安裝缺少的套件，無需手動 npm install。\n2. 執行依賴安裝時優先使用正常 TLS 驗證；只有偵測到憑證鏈錯誤才會為該次 npm 安裝暫時設定 strict-ssl=false，之後恢復。公司環境仍建議使用核准 CA 與 npm registry。\n3. Playwright 將使用已安裝的 Google Chrome；設定 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1，不另下載 Chromium。\n4. 參數可放在 parameters.json；網站登入驗證與 MFA 仍由使用者操作。\n5. npm 安裝紀錄可查看 .local/npm-install.log，暫存及快取位於本專案的 .local 資料夾，不需要管理員權限（但仍受公司端點保護政策限制）。\n\n**注意**：若系統沒有適用的 Node.js/npm，會下載固定 Node.js v24.13.0 Windows x64 官方 ZIP（內含 npm）至專案 runtime/node，強制比對固定 SHA-256。公司環境建議使用核准 CA；無法連網時可事先放入完整 runtime/node。\n`;
 }
 
 function generatedRunner(project: WorkflowProject): string {
