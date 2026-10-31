@@ -23,3 +23,7 @@ Python 批次預設個別失敗繼續下一筆。匯出時選擇「失敗後停�
 - 使用 `--input batch.xlsx --on-error continue` 可指定檔案與失敗時繼續；`--check-only` 檢查格式，不開瀏覽器、不下載。
 - `.local/batch-runs/<執行序號>/summary.json`、`summary.csv` 及各筆日誌保存結果；每筆暫存參數在結束後刪除。
 - Excel 中需要保留前置零的欄位請設定為文字，避免被 Excel 自行轉成數字。
+
+
+## v2.5.5 Windows 長路徑修正
+Python Selenium／Playwright 匯出套件自動建立短路徑虛擬環境於使用者目錄 `.aspy/<專案識別碼>`，不再在深層專案目錄下安裝 Playwright。可使用 `AUTOMATION_STUDIO_PYTHON_ENV_ROOT` 指定其他可寫入的短路徑根目錄。`wheelhouse`、批次執行、CDP 與 TLS 驗證方式不變。

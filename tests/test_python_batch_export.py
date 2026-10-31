@@ -116,7 +116,7 @@ class BatchTests(unittest.TestCase):
             calls.append(row['row'])
             return 1, folder / 'failure.log'
         with patch.object(batch, 'ROOT', self.path), patch.object(batch, 'run_row', side_effect=fail_first):
-            self.assertEqual(batch.run_batch(['--input', 'batch.json']), 1)
+            self.assertEqual(batch.run_batch(['--input', 'batch.json', '--on-error', 'stop']), 1)
         self.assertEqual(calls, [1])
 
 

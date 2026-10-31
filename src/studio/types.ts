@@ -332,6 +332,9 @@ export interface ExportSelection {
   pythonSelenium?: boolean;
   pythonBatch?: boolean;
   pythonBatchOnError?: "continue" | "stop";
+  pythonCdpStartMode?: "target" | "custom" | "blank";
+  pythonCdpCustomUrl?: string;
+  pythonCdpNavigateExisting?: boolean;
   pythonBatchIncludeCurrentRows?: boolean;
   pythonBatchRows?: Array<{enabled: boolean; parameters: Record<string, string | boolean>}>;
   skill: boolean;

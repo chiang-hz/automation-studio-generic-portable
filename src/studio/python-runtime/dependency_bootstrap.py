@@ -1,12 +1,13 @@
 """Standard-library-only dependency setup for Automation Studio exported Python flows.
 
-Automatically reuses a compatible Python environment or creates a project-local
+Automatically reuses a compatible Python environment or creates a short-path, project-specific
 virtual environment when requirements are missing. Uses wheelhouse before network.
 Never modifies workflow.json, browser profiles, credentials or global packages.
 """
 from __future__ import annotations
 
 import os
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -15,7 +16,17 @@ import time
 ROOT = Path(__file__).resolve().parent
 REQUIREMENTS = ROOT / 'requirements.txt'
 LOCAL = ROOT / '.local'
-VENV = LOCAL / 'python-env'
+# Keep third-party package trees out of deeply nested exported ZIP folders.
+# Playwright's internal paths can exceed legacy Windows MAX_PATH otherwise.
+def environment_dir(root: Path | None = None, home: Path | None = None) -> Path:
+    project = (root or ROOT).resolve()
+    override = os.environ.get('AUTOMATION_STUDIO_PYTHON_ENV_ROOT', '').strip()
+    base = Path(override).expanduser() if override else ((home or Path.home()) / '.aspy')
+    # Hash the canonical project path; independent exports do not share packages.
+    identity = os.path.normcase(str(project)).casefold().encode('utf-8')
+    return base / hashlib.sha256(identity).hexdigest()[:12]
+
+VENV = environment_dir()
 LOCK = LOCAL / 'dependency-install.lock'
 TARGETS = frozenset(('runner.py', 'cdp_bootstrap.py', 'batch_runner.py'))
 
@@ -135,7 +146,8 @@ def install(python: Path):
 def prepare_python() -> str:
     if not REQUIREMENTS.is_file():
         raise RuntimeError('requirements.txt was not found in exported Python project.')
-    local_python = executable(VENV)
+    env_dir = environment_dir()
+    local_python = executable(env_dir)
     if local_python.exists():
         missing = missing_dependencies(local_python)
         if not missing:
@@ -150,12 +162,13 @@ def prepare_python() -> str:
     print('[SETUP] Missing or incompatible dependencies: ' + missing, flush=True)
     acquire_lock()
     try:
+        env_dir.parent.mkdir(parents=True, exist_ok=True)
         # Another process may have completed setup while this process waited.
         if local_python.exists() and not missing_dependencies(local_python):
             return str(local_python)
         if not local_python.exists():
-            print('[SETUP] Creating isolated environment in .local/python-env (no administrator privileges)...', flush=True)
-            result = subprocess.run([sys.executable, '-m', 'venv', str(VENV)], cwd=ROOT)
+            print('[SETUP] Creating isolated environment at ' + str(env_dir) + ' (no administrator privileges)...', flush=True)
+            result = subprocess.run([sys.executable, '-m', 'venv', str(env_dir)], cwd=ROOT)
             if result.returncode or not local_python.exists():
                 raise RuntimeError('Could not create a Python virtual environment. '
                                    'Check Python venv/ensurepip support and write permissions.')

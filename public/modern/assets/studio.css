@@ -822,3 +822,24 @@ html.modern-active[data-theme=dark] .designer-selected-pill {color:var(--accent)
   .modern-active .modern-step > .modern-step-actions {left:auto;right:50px;}
 }
 
+
+/* v2.5.7: Let execution history use the remaining viewport height. */
+@media (min-height: 580px) {
+  .modern-active #runsView > .card {
+    min-height: calc(100dvh - 80px);
+    display: flex;
+    flex-direction: column;
+  }
+  .modern-active #modern-runs {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .modern-active #modern-runs .runs-modern-scroll {
+    flex: 1 1 auto;
+    height: auto;
+    max-height: none;
+    min-height: 220px;
+  }
+}

@@ -5,7 +5,7 @@ import { useStudio } from '../store';
 import { studioApi, type ExportSelection } from '../sdk/restClient';
 import { Button } from './ui/button';
 
-const initialSelection: ExportSelection = { portableWorkflow: true, typescript: true, skill: true, pythonPlaywright: false, pythonSelenium: false, pythonBatch: true, pythonBatchOnError: "continue", pythonBatchIncludeCurrentRows: false, includeTests: true, includeExamples: true };
+const initialSelection: ExportSelection = { portableWorkflow: true, typescript: true, skill: true, pythonPlaywright: false, pythonSelenium: false, pythonBatch: true, pythonBatchOnError: "continue", pythonCdpStartMode: "target", pythonCdpCustomUrl: "", pythonCdpNavigateExisting: false, pythonBatchIncludeCurrentRows: false, includeTests: true, includeExamples: true };
 const checkLabels = ['入口網址格式正確', '允許網域已設定', '流程至少有一個啟用步驟', '密碼、Cookie 與工作站不會匯出'];
 
 export function PublishManager() {
@@ -75,6 +75,14 @@ export function PublishManager() {
           {selection.pythonBatch !== false && <label className="field"><span>批次任務失敗時</span><select value={selection.pythonBatchOnError ?? 'continue'} onChange={event => setSelection(current => ({ ...current, pythonBatchOnError: event.target.value as 'continue' | 'stop' }))}><option value="continue">繼續執行下一筆（預設）</option><option value="stop">停止整批任務</option></select></label>}
           {selection.pythonBatch !== false && <label><input type="checkbox" checked={!!selection.pythonBatchIncludeCurrentRows} onChange={event => patchSelection('pythonBatchIncludeCurrentRows', event.target.checked)}/> 同時帶入目前批次清單（{snapshot.state.batchRows.length} 筆；不包含敏感參數）</label>}
           <small>預設只匯出範例清單；敏感資料及登入資訊不會寫入 ZIP。CDP 批次固定依序執行。</small>
+        </div>}
+        {(selection.pythonPlaywright || selection.pythonSelenium) && <div className="checkbox-row" style={{flexDirection:'column', alignItems:'flex-start', gap:8}}>
+          <label className="field"><span>CDP 啟動網址</span><select value={selection.pythonCdpStartMode ?? 'target'} onChange={event => setSelection(current => ({...current, pythonCdpStartMode: event.target.value as 'target'|'custom'|'blank'}))}>
+            <option value="target">自動開啟流程目標網址（預設）</option><option value="custom">指定自訂網址</option><option value="blank">保持空白頁面</option>
+          </select></label>
+          {selection.pythonCdpStartMode === 'custom' && <label className="field"><span>自訂 CDP 網址（須屬於允許網域）</span><input type="url" value={selection.pythonCdpCustomUrl ?? ''} placeholder="https://example.gov.tw/login" onChange={event => setSelection(current => ({...current, pythonCdpCustomUrl: event.target.value}))}/></label>}
+          <label><input type="checkbox" checked={!!selection.pythonCdpNavigateExisting} onChange={event => patchSelection('pythonCdpNavigateExisting', event.target.checked)}/> 連線既有 CDP 時也自動開啟目標網站（預設關閉）</label>
+          <small>自動導航既有 CDP 會新增分頁，不覆蓋目前分頁；僅允許 HTTP(S) 及流程允許網域。</small>
         </div>}
         <div className="checkbox-row"><label><input type="checkbox" checked={selection.includeTests} onChange={event => patchSelection('includeTests', event.target.checked)}/> 包含測試案例</label><label><input type="checkbox" checked={selection.includeExamples} onChange={event => patchSelection('includeExamples', event.target.checked)}/> 包含範例參數</label></div>
       </section>

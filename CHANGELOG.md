@@ -1,3 +1,10 @@
+## v2.5.7
+- Execution history table now expands vertically to align with the viewport/sidebar bottom; scrolling remains inside the table.
+- Removes the 440px cap and record-count-based height; updates the live compiled frontend assets and cache version.
+
+## 2.5.6
+- Python Playwright Node CA startup conflict normalization; CDP export start URL options and safe existing-CDP new-tab navigation.
+
 ## V2.5.4 — 登入狀態共用面板
 
 - 登入狀態共用面板預設收折，可手動展開。
@@ -1798,3 +1805,6 @@ Target: Automation Studio v1.0.39
 - Prefer npm bundled with verified Node; reject workflow-local `node_modules/npm` as a runtime source.
 - When npm is missing or broken, install pinned official portable Node/npm archive into exported `runtime/node`, verifying SHA256 first.
 - Reuse verified runtime and installed packages on subsequent starts; keep download TLS fallbacks scoped to retry invocations.
+
+## 2.5.5
+- Python Selenium/Playwright export creates per-project short-path virtual environments in user home `.aspy`, avoiding Windows long-path pip failures. Optional `AUTOMATION_STUDIO_PYTHON_ENV_ROOT` override; reused on subsequent runs.

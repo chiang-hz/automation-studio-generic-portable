@@ -13,6 +13,31 @@ import sys
 import time
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+# Playwright ships its own Node driver. Prevent mutually exclusive Node CA modes
+# inherited from company-wide NODE_OPTIONS while retaining unrelated options.
+def _normalize_playwright_node_options():
+    import shlex
+    raw = os.environ.get('NODE_OPTIONS', '')
+    if not raw:
+        return
+    try:
+        options = shlex.split(raw, posix=False)
+    except ValueError:
+        # A malformed global NODE_OPTIONS would otherwise kill the driver.
+        print('[Setup] Invalid NODE_OPTIONS; clearing for Playwright driver.', flush=True)
+        os.environ.pop('NODE_OPTIONS', None)
+        return
+    ca = {'--use-openssl-ca', '--use-system-ca'}
+    cleaned = [token for token in options if token not in ca]
+    if len(cleaned) != len(options):
+        if cleaned:
+            os.environ['NODE_OPTIONS'] = ' '.join(cleaned)
+        else:
+            os.environ.pop('NODE_OPTIONS', None)
+        os.environ['NODE_USE_SYSTEM_CA'] = '1'
+        print('[Setup] Removed conflicting Node CA flags; using system CA.', flush=True)
+
+_normalize_playwright_node_options()
 from engine import BrowserEngine
 
 ROOT = Path(__file__).resolve().parent

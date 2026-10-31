@@ -29229,7 +29229,7 @@ function yI() {
 		}),
 		/* @__PURE__ */ (0, Y.jsxs)("div", {
 			className: "grid-scroll runs-modern-scroll",
-			style: { height: Math.min(440, Math.max(180, 54 + c.length * 56)) },
+			
 			ref: s,
 			children: [/* @__PURE__ */ (0, Y.jsxs)("table", {
 				className: "modern-data-grid",
@@ -29898,7 +29898,7 @@ var jI = {
 	pythonPlaywright: !1,
 	pythonSelenium: !1,
 	pythonBatch: !0,
-	pythonBatchOnError: "continue",
+	pythonBatchOnError: "continue", pythonCdpStartMode: "target", pythonCdpCustomUrl: "", pythonCdpNavigateExisting: false,
 	pythonBatchIncludeCurrentRows: !1,
 	includeTests: !0,
 	includeExamples: !0
@@ -30075,6 +30075,12 @@ function NI() {
 								/* @__PURE__ */ (0, Y.jsx)("small", { children: "未勾選時只包含範例；CDP 批次依序執行，不共用敏感參數。" })
 							]
 						}),
+						(t.pythonPlaywright || t.pythonSelenium) && /* @__PURE__ */ (0, Y.jsxs)("div", {className:"checkbox-row",style:{flexDirection:"column",alignItems:"flex-start",gap:8},children:[
+							/* @__PURE__ */ (0, Y.jsxs)("label",{className:"field",children:[/* @__PURE__ */ (0,Y.jsx)("span",{children:"CDP 啟動網址"}),/* @__PURE__ */ (0,Y.jsxs)("select",{value:t.pythonCdpStartMode??"target",onChange:e=>n(s=>({...s,pythonCdpStartMode:e.target.value})),children:[/* @__PURE__ */ (0,Y.jsx)("option",{value:"target",children:"自動開啟流程目標網址（預設）"}),/* @__PURE__ */ (0,Y.jsx)("option",{value:"custom",children:"指定自訂網址"}),/* @__PURE__ */ (0,Y.jsx)("option",{value:"blank",children:"保持空白頁面"})]})]}),
+							t.pythonCdpStartMode==="custom"&&/* @__PURE__ */ (0,Y.jsxs)("label",{className:"field",children:[/* @__PURE__ */ (0,Y.jsx)("span",{children:"CDP 自訂網址（限允許網域）"}),/* @__PURE__ */ (0,Y.jsx)("input",{type:"url",value:t.pythonCdpCustomUrl??"",placeholder:"https://example.gov.tw/login",onChange:e=>n(s=>({...s,pythonCdpCustomUrl:e.target.value}))})]}),
+							/* @__PURE__ */ (0,Y.jsxs)("label",{children:[/* @__PURE__ */ (0,Y.jsx)("input",{type:"checkbox",checked:!!t.pythonCdpNavigateExisting,onChange:e=>l("pythonCdpNavigateExisting",e.target.checked)})," 連線既有 CDP 時自動開啟網站（預設不導航）"]}),
+							/* @__PURE__ */ (0,Y.jsx)("small",{children:"連線既有 CDP 時會開新分頁，不覆蓋已登入頁面。"})
+						]}),
 						/* @__PURE__ */ (0, Y.jsxs)("div", {
 							className: "checkbox-row",
 							children: [/* @__PURE__ */ (0, Y.jsxs)("label", { children: [/* @__PURE__ */ (0, Y.jsx)("input", {

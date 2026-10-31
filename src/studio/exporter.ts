@@ -27,7 +27,7 @@ export class ExportService {
       name: "EXPORT-MANIFEST.json",
       data: json({
         product: "Automation Studio",
-        productVersion: "2.5.2",
+        productVersion: "2.5.6",
         exportedAt: new Date().toISOString(),
         projectId: project.id,
         projectVersion: project.version,
@@ -153,10 +153,22 @@ async function pythonEntries(project: WorkflowProject, selection: ExportSelectio
   if (formats.has("xlsx")) dependencies.push("openpyxl>=3.1,<4");
   if (formats.has("docx")) dependencies.push("python-docx>=1.1,<2");
   if (selection.pythonBatch !== false && !dependencies.some(item => item.startsWith("openpyxl"))) dependencies.push("openpyxl>=3.1,<4");
+  const cdpMode = selection.pythonCdpStartMode ?? "target";
+  if (!["target", "custom", "blank"].includes(cdpMode)) throw new Error("不支援的 CDP 啟動網址模式。");
+  const customUrl = (selection.pythonCdpCustomUrl ?? "").trim();
+  if (cdpMode === "custom") {
+    let candidate: URL;
+    try { candidate = new URL(customUrl); } catch { throw new Error("CDP 自訂網址格式不正確。"); }
+    if (!["http:", "https:"].includes(candidate.protocol) || !project.allowedDomains.includes(candidate.hostname.toLowerCase()) || candidate.username || candidate.password) {
+      throw new Error("CDP 自訂網址必須是允許網域內的 HTTP(S) 網址，且不可包含帳密。");
+    }
+  }
+  const cdpSettings = { startMode: cdpMode, customUrl: cdpMode === "custom" ? customUrl : "", navigateExisting: selection.pythonCdpNavigateExisting === true };
   const pyRequirements = dependencies.join("\n") + "\n";
   const bat = pythonRunBat();
   const entries: ZipEntry[] = [
     { name: `${base}/workflow.json`, data: json(project) },
+    { name: `${base}/cdp-settings.json`, data: json(cdpSettings) },
     { name: `${base}/runner.py`, data: runtime.replace('BACKEND = \'__BACKEND__\'', `BACKEND = \'${backend}\'`) },
     { name: `${base}/engine.py`, data: engine },
     { name: `${base}/selector_compat.js`, data: await fs.readFile(path.join(sourceDir, "selector_compat.js"), "utf8") },

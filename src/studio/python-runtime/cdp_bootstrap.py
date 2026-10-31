@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote
 from urllib.request import ProxyHandler, Request, build_opener
 
 from runner import ROOT, hostname_allowed, load_json, main as run_workflow
@@ -101,7 +101,17 @@ def tcp_port_open(endpoint):
         return False
 
 
-def login_start_url(project):
+def login_start_url(project, settings=None):
+    settings = settings or {}
+    mode = settings.get("startMode", "target")
+    if mode == "blank":
+        return "about:blank"
+    if mode == "custom":
+        url = settings.get("customUrl", "")
+        parsed = urlsplit(url)
+        if parsed.scheme in ("http", "https") and not parsed.username and not parsed.password and hostname_allowed(url, project.get("allowedDomains") or []):
+            return url
+        raise CdpStartupError("CDP custom URL is invalid or outside allowedDomains")
     """Open only a URL whose exact host the exported workflow permits."""
     url = project.get('targetUrl') or ''
     if urlsplit(url).scheme in ('http', 'https') and hostname_allowed(url, project.get('allowedDomains') or []):
@@ -109,7 +119,7 @@ def login_start_url(project):
     return 'about:blank'
 
 
-def start_chrome(executable, endpoint, project):
+def start_chrome(executable, endpoint, project, settings=None):
     local = os.environ.get('LOCALAPPDATA')
     if not local:
         raise CdpStartupError('LOCALAPPDATA is unavailable; unable to create a persistent Chrome login profile.')
@@ -117,7 +127,7 @@ def start_chrome(executable, endpoint, project):
     profile.mkdir(parents=True, exist_ok=True)
     port = urlsplit(endpoint).port
     cmd = [executable, '--remote-debugging-address=127.0.0.1', f'--remote-debugging-port={port}',
-           '--user-data-dir=' + str(profile), '--no-first-run', '--new-window', 'about:blank']
+           '--user-data-dir=' + str(profile), '--no-first-run', '--new-window', login_start_url(project, settings)]
     print('[CDP] Starting installed Chrome (persistent login profile):', str(profile), flush=True)
     try:
         # Chrome continues running after the one-click Python launcher exits.
@@ -127,6 +137,22 @@ def start_chrome(executable, endpoint, project):
         return subprocess.Popen(cmd, **kwargs)
     except OSError as exc:
         raise CdpStartupError('Cannot start Chrome: ' + str(exc)) from exc
+
+
+def open_existing_cdp_tab(endpoint, url):
+    """Add a new tab without overwriting an existing logged-in page."""
+    if url == 'about:blank':
+        return
+    opener = build_opener(ProxyHandler({}))
+    request = Request(endpoint + '/json/new?' + quote(url, safe=''), method='PUT')
+    try:
+        with opener.open(request, timeout=8) as response:
+            tab = json.loads(response.read(32768).decode('utf-8'))
+        if not isinstance(tab, dict) or tab.get('type') != 'page':
+            raise CdpStartupError('Chrome did not create a new page for the startup URL')
+        print('[CDP] Opened requested URL in a NEW tab:', url, flush=True)
+    except (OSError, ValueError) as exc:
+        raise CdpStartupError('Could not open the requested URL in existing CDP Chrome: ' + str(exc)) from exc
 
 
 def wait_for_cdp(endpoint, process=None, seconds=25):
@@ -164,6 +190,7 @@ def main(argv=None):
     parser.add_argument('--check-only', action='store_true', help='Validate workflow without opening Chrome')
     args = parser.parse_args(argv)
     project = load_json(ROOT / 'workflow.json')
+    settings = load_json(ROOT / 'cdp-settings.json')
     if not isinstance(project, dict) or not project.get('browser'):
         raise CdpStartupError('workflow.json not found or missing browser settings')
 
@@ -182,11 +209,13 @@ def main(argv=None):
     if probe(endpoint):
         print('[CDP] Existing local CDP Chrome found. Reusing its current browser session.', flush=True)
         print('[CDP] Confirm this is your intended authorized Chrome window before continuing.', flush=True)
+        if settings.get('navigateExisting') is True:
+            open_existing_cdp_tab(endpoint, login_start_url(project, settings))
     else:
         if tcp_port_open(endpoint):
             raise CdpStartupError('The configured port is in use but does not serve Chrome DevTools. '
                                   'Close the conflicting application or change AUTOMATION_STUDIO_CDP_PORT.')
-        process = start_chrome(chrome_binary(), endpoint, project)
+        process = start_chrome(chrome_binary(), endpoint, project, settings)
         wait_for_cdp(endpoint, process)
 
     if not (project.get('browser') or {}).get('authStateEnabled'):

@@ -14,6 +14,28 @@ spec.loader.exec_module(bootstrap)
 
 
 class DependencyBootstrapTests(unittest.TestCase):
+    def test_short_env_location_is_outside_deep_project_path(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder) / 'user'
+            nested = home / ('very-long-directory-' * 20) / 'export'
+            target = bootstrap.environment_dir(root=nested, home=home)
+            self.assertEqual(target.parent, home / '.aspy')
+            self.assertEqual(len(target.name), 12)
+            self.assertNotIn('export', str(target))
+
+    def test_different_projects_have_distinct_envs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder)
+            a = bootstrap.environment_dir(root=home / 'first', home=home)
+            b = bootstrap.environment_dir(root=home / 'second', home=home)
+            self.assertNotEqual(a, b)
+            self.assertEqual(a, bootstrap.environment_dir(root=home / 'first', home=home))
+
+    def test_override_env_root(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with mock.patch.dict(os.environ, {'AUTOMATION_STUDIO_PYTHON_ENV_ROOT': folder}):
+                self.assertEqual(bootstrap.environment_dir(root=Path('example')).parent, Path(folder))
+
     def test_dependency_probe_detects_missing_version_without_network(self):
         with tempfile.TemporaryDirectory() as folder:
             reqs = Path(folder) / 'requirements.txt'

@@ -824,3 +824,24 @@ html.modern-active[data-theme=dark] .designer-selected-pill {color:var(--accent)
   width:100%;max-width:none;min-width:0;box-sizing:border-box;
 }
 .modern-active #settingsView .settings-page {margin-inline:0;}
+
+/* v2.5.7: Let execution history use the remaining viewport height. */
+@media (min-height: 580px) {
+  .modern-active #runsView > .card {
+    min-height: calc(100dvh - 80px);
+    display: flex;
+    flex-direction: column;
+  }
+  .modern-active #modern-runs {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .modern-active #modern-runs .runs-modern-scroll {
+    flex: 1 1 auto;
+    height: auto;
+    max-height: none;
+    min-height: 220px;
+  }
+}
