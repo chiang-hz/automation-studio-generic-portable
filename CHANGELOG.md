@@ -1,3 +1,16 @@
+## v2.5.9
+
+- 自動化設計器：按下「刪除步驟」後，不再強制關閉已開啟的「步驟設定」面板。
+- 刪除後延用現有的相鄰步驟選取行為；若沒有步驟，面板維持開啟並顯示選取提示。
+- 保留單擊其他步驟切換設定、點擊畫布空白處關閉面板、拖曳／排序及工作流程執行功能。
+- 同步更新前端原始碼、正式瀏覽器載入資產及快取識別。
+
+## v2.5.8
+
+- 修復正式載入前端與原始碼未同步造成的步驟設定面板異常關閉。
+- 雙擊步驟開啟設定後，單擊其他步驟直接切換設定內容，不會關閉面板；階層清單空白區及視覺畫布空白區會關閉面板。
+- 保留拖曳排序、條件分支、步驟動作與原有執行核心。
+
 ## v2.5.7
 - Execution history table now expands vertically to align with the viewport/sidebar bottom; scrolling remains inside the table.
 - Removes the 440px cap and record-count-based height; updates the live compiled frontend assets and cache version.

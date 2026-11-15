@@ -24256,7 +24256,8 @@ function zM({ kind: e }) {
 	});
 }
 function BM(e) {
-	Ch.getState().setSheet(!1), Z.select(e);
+	// Keep the property sheet open when the user selects another step.
+	Z.select(e);
 }
 function VM(e) {
 	Z.select(e), Ch.getState().setSheet(!0);
@@ -24300,7 +24301,7 @@ function HM({ step: e }) {
 				"aria-label": String(r),
 				disabled: (t === "run-single" || t === "run-from") && !e.enabled,
 				onClick: () => {
-					Z.action(e.id, String(t)), t === "delete" && queueMicrotask(() => Ch.getState().setSheet(!1));
+					Z.action(e.id, String(t));
 				},
 				children: /* @__PURE__ */ (0, Y.jsx)(i, { size: 15 })
 			}, String(t));
@@ -24442,7 +24443,7 @@ function qM({ steps: e, owner: t = null, branch: n = "steps", depth: r = 0 }) {
 			/* @__PURE__ */ (0, Y.jsxs)("article", {
 				tabIndex: 0,
 				draggable: !0,
-				title: "單擊選取，雙擊開啟右側步驟設定；按住後拖曳：上緣插入前方、中央交換、下緣插入後方",
+				title: "單擊選取（設定面板開啟時直接切換設定），雙擊開啟步驟設定；按住後拖曳：上緣插入前方、中央交換、下緣插入後方",
 				"data-modern-step": h.id,
 				className: `modern-step ${i === h.id ? "selected" : ""} ${h.enabled ? "" : "disabled"} ${o === h.id ? "drag-ready" : ""} ${c?.id === h.id ? "drop-" + c.mode : ""}`,
 				onPointerDown: (e) => {
@@ -24698,6 +24699,7 @@ function qee() {
 			onNodeDoubleClick: (e, t) => {
 				t.type === "step" && VM(t.id);
 			},
+			onPaneClick: () => Ch.getState().setSheet(!1),
 			fitView: !0,
 			fitViewOptions: { padding: .2 },
 			minZoom: .15,
@@ -24767,7 +24769,7 @@ function Jee() {
 								c.current = !1, o.current.push(t);
 								return;
 							}
-							a(o.current.length), queueMicrotask(() => Ch.getState().setSheet(!1)), Z.toast("已復原上一個步驟變更");
+							a(o.current.length), Z.toast("已復原上一個步驟變更");
 						}
 					},
 					children: [/* @__PURE__ */ (0, Y.jsx)(Lm, { size: 15 }), "復原"]
@@ -24789,6 +24791,10 @@ function Jee() {
 		})]
 	}), e.state.project ? t === "canvas" ? /* @__PURE__ */ (0, Y.jsx)(qee, {}) : /* @__PURE__ */ (0, Y.jsxs)("div", {
 		className: "modern-list",
+		onClick: (e) => {
+			const target = e.target;
+			if (target instanceof Element && !target.closest('[data-modern-step],.modern-branches,.modern-loop,.insert-slot,button,a,input,select,textarea,[role="dialog"]')) Ch.getState().setSheet(!1);
+		},
 		children: [
 			/* @__PURE__ */ (0, Y.jsx)("div", {
 				className: "workflow-boundary",

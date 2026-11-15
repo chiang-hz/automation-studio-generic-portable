@@ -12,9 +12,10 @@ export const kindIcons:Record<string,typeof Globe>={
   download:Download,savePagePdf:FileDown,manual:Shield,condition:GitBranch,loop:Repeat2
 };
 function StepIcon({kind}:{kind:string}){const Icon=kindIcons[kind]??Workflow;return <span className={`action-icon kind-${kind}`}><Icon size={17}/></span>;}
+// A single click changes the selected step without closing an already-open property sheet.
 function selectStep(id:string){runtimeSdk.select(id);}
 function openStepSettings(id:string){runtimeSdk.select(id);useStudio.getState().setSheet(true);}
-function StepActions({step}:{step:Step}){return <div className="modern-step-actions nodrag nopan" onClick={e=>e.stopPropagation()}>{[['run-single',Play,'只執行此步驟'],['run-from',SkipForward,'從此步驟執行'],['duplicate',Copy,'複製步驟'],['toggle',Power,step.enabled?'停用':'啟用'],['delete',Trash2,'刪除步驟']].map(([action,Icon,label])=>{const I=Icon as typeof Play;return <Button key={String(action)} size="icon" variant={action==='delete'?'danger':'ghost'} title={String(label)} aria-label={String(label)} disabled={(action==='run-single'||action==='run-from')&&!step.enabled} onClick={()=>{runtimeSdk.action(step.id,String(action));if(action==='delete')queueMicrotask(()=>useStudio.getState().setSheet(false));}}><I size={15}/></Button>;})}</div>;}
+function StepActions({step}:{step:Step}){return <div className="modern-step-actions nodrag nopan" onClick={e=>e.stopPropagation()}>{[['run-single',Play,'只執行此步驟'],['run-from',SkipForward,'從此步驟執行'],['duplicate',Copy,'複製步驟'],['toggle',Power,step.enabled?'停用':'啟用'],['delete',Trash2,'刪除步驟']].map(([action,Icon,label])=>{const I=Icon as typeof Play;return <Button key={String(action)} size="icon" variant={action==='delete'?'danger':'ghost'} title={String(label)} aria-label={String(label)} disabled={(action==='run-single'||action==='run-from')&&!step.enabled} onClick={()=>{runtimeSdk.action(step.id,String(action));}}><I size={15}/></Button>;})}</div>;}
 function InsertMenu({owner=null,branch='steps',index}:{owner?:string|null;branch?:string;index:number}){
   const [open,setOpen]=useState(false);
   const [query,setQuery]=useState('');
@@ -149,7 +150,6 @@ export function Designer(){
       skipUndoCapture.current=false;undoHistory.current.push(previous);return;
     }
     setUndoCount(undoHistory.current.length);
-    queueMicrotask(()=>useStudio.getState().setSheet(false));
     runtimeSdk.toast('已復原上一個步驟變更');
   };
   useEffect(()=>{
