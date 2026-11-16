@@ -1319,10 +1319,10 @@ test("左側提供使用說明與回報問題並支援預設收件信箱", async
   assert.match(html, /npm install/);
   assert.match(html, /npx playwright install chromium/);
   assert.match(html, /不需要另外安裝.*typescript.*ts-node/s);
-  assert.match(css, /\.faq-list summary \{[^}]*font-size: 13px;/s);
-  assert.match(css, /\.faq-list p \{[^}]*font-size: 12px;/s);
-  assert.match(css, /\.flow-node small \{[^}]*font-size: 11px;/s);
-  assert.match(css, /\.arch-layer span \{[^}]*font-size: 11px;/s);
+  assert.match(css, /\.faq-list summary \{[^}]*font-size:\s*0\.8125rem;/s);
+  assert.match(css, /\.faq-list p \{[^}]*font-size:\s*0\.75rem;/s);
+  assert.match(css, /\.flow-node small \{[^}]*font-size:\s*0\.6875rem;/s);
+  assert.match(css, /\.arch-layer span \{[^}]*font-size:\s*0\.6875rem;/s);
 });
 
 

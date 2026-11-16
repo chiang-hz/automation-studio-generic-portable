@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { runtimeSdk } from '../sdk/runtimeSdk';
 import type { Parameter } from '../model';
@@ -57,12 +57,18 @@ export function ParameterManager() {
   const parameters = project?.parameters ?? [];
   const [draft, setDraft] = useState<ParameterDraft>(emptyDraft);
   const [error, setError] = useState('');
+  const [errorField, setErrorField] = useState<'label' | 'name' | ''>('');
+  const labelRef = useRef<HTMLInputElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setDraft(emptyDraft()); setError(''); }, [project?.id]);
+  useEffect(() => { setDraft(emptyDraft()); setError(''); setErrorField(''); }, [project?.id]);
 
-  const patch = <K extends keyof ParameterDraft>(key: K, value: ParameterDraft[K]) => setDraft(current => ({ ...current, [key]: value }));
-  const edit = (parameter: Parameter) => { setDraft(toDraft(parameter)); setError(''); };
-  const reset = () => { setDraft(emptyDraft()); setError(''); };
+  const patch = <K extends keyof ParameterDraft>(key: K, value: ParameterDraft[K]) => {
+    setDraft(current => ({ ...current, [key]: value }));
+    if (key === errorField) { setError(''); setErrorField(''); }
+  };
+  const edit = (parameter: Parameter) => { setDraft(toDraft(parameter)); setError(''); setErrorField(''); };
+  const reset = () => { setDraft(emptyDraft()); setError(''); setErrorField(''); };
   const remove = (id: string) => {
     if (!project) return;
     runtimeSdk.setParameters(parameters.filter(parameter => parameter.id !== id));
@@ -71,14 +77,31 @@ export function ParameterManager() {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!project) return;
+    const label = draft.label.trim();
+    if (!label) {
+      setError('請輸入參數顯示名稱。');
+      setErrorField('label');
+      labelRef.current?.focus();
+      return;
+    }
     const name = draft.name.trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) { setError('參數 Key 格式不正確。'); return; }
-    if (parameters.some(parameter => parameter.name === name && parameter.id !== draft.id)) { setError('參數 Key 不可重複。'); return; }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      setError('參數 Key 格式不正確。');
+      setErrorField('name');
+      nameRef.current?.focus();
+      return;
+    }
+    if (parameters.some(parameter => parameter.name === name && parameter.id !== draft.id)) {
+      setError('參數 Key 不可重複。');
+      setErrorField('name');
+      nameRef.current?.focus();
+      return;
+    }
     const id = draft.id || `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
     const dependentOptions = readDependentOptions(draft.dependentOptions);
     const parameter: Parameter = {
       id,
-      label: draft.label.trim(),
+      label,
       name,
       type: draft.type,
       defaultValue: draft.sensitive ? '' : draft.defaultValue,
@@ -103,7 +126,7 @@ export function ParameterManager() {
   return <div className="parameter-manager two-column wide-left">
     <section className="card">
       <div className="section-heading"><div><h2>流程參數</h2><p>將年度、階段、報表及格式等值抽離流程。</p></div><Button size="sm" onClick={reset}><Plus size={14}/>新增參數</Button></div>
-      <div className="data-table-wrap"><table className="data-table"><thead><tr><th>顯示名稱</th><th>Key</th><th>類型</th><th>預設值</th><th>必填</th><th>操作</th></tr></thead><tbody>
+      <div className="data-table-wrap" tabIndex={0} role="region" aria-label="流程參數列表"><table className="data-table"><caption className="visually-hidden">流程參數設定清單</caption><thead><tr><th scope="col">顯示名稱</th><th scope="col">Key</th><th scope="col">類型</th><th scope="col">預設值</th><th scope="col">必填</th><th scope="col">操作</th></tr></thead><tbody>
         {parameters.length ? parameters.map(parameter => <tr key={parameter.id}>
           <td><b>{parameter.label}</b>{parameter.sensitive && <small>敏感資料</small>}</td><td><code>{parameter.name}</code></td><td>{typeLabels[parameter.type] ?? parameter.type}</td><td>{parameter.sensitive ? '••••••' : String(parameter.defaultValue ?? '')}</td><td>{parameter.required ? '是' : '否'}</td>
           <td className="row-actions"><Button size="icon" variant="ghost" title={`編輯 ${parameter.label}`} aria-label={`編輯 ${parameter.label}`} onClick={() => edit(parameter)}><Pencil size={14}/></Button><Button size="icon" variant="danger" title={`刪除 ${parameter.label}`} aria-label={`刪除 ${parameter.label}`} onClick={() => remove(parameter.id)}><Trash2 size={14}/></Button></td>
@@ -112,17 +135,17 @@ export function ParameterManager() {
     </section>
     <section className="card sticky-card">
       <div className="section-heading"><div><h2>{draft.id ? '編輯參數' : '新增參數'}</h2><p>敏感參數不會寫入匯出檔。</p></div></div>
-      <form className="parameter-form" onSubmit={submit}>
-        <label className="field"><span>顯示名稱</span><input required value={draft.label} onChange={event => patch('label', event.target.value)}/></label>
-        <label className="field"><span>Key</span><input required pattern="[A-Za-z_][A-Za-z0-9_]*" value={draft.name} onChange={event => patch('name', event.target.value)}/></label>
-        <label className="field"><span>類型</span><select value={draft.type} onChange={event => patch('type', event.target.value)}>{Object.entries(typeLabels).map(([type, label]) => <option key={type} value={type}>{label}</option>)}</select></label>
-        <label className="field"><span>預設值</span><input value={draft.defaultValue} disabled={draft.sensitive || draft.type === 'secret'} onChange={event => patch('defaultValue', event.target.value)}/></label>
-        <label className="field"><span>選項（逗號分隔）</span><input value={draft.options} onChange={event => patch('options', event.target.value)}/></label>
-        <label className="field"><span>相依參數（選填）</span><select value={draft.dependsOn} onChange={event => patch('dependsOn', event.target.value)}><option value="">無</option>{choices.map(parameter => <option key={parameter.id} value={parameter.name}>{parameter.label} ({parameter.name})</option>)}</select><small>只有選項類型需要使用；子選單會依此參數的值動態篩選。</small></label>
-        <label className="field"><span>相依選項（每行：父值=子選項1|子選項2）</span><textarea rows={5} placeholder={'決算主要表=損益表|盈虧撥補表\n決算明細表=收入明細表|成本彙總表'} value={draft.dependentOptions} onChange={event => patch('dependentOptions', event.target.value)}/></label>
+      <form className="parameter-form" onSubmit={submit} noValidate>
+        <label className="field"><span>顯示名稱</span><input ref={labelRef} name="label" required aria-invalid={errorField === 'label'} aria-describedby={errorField === 'label' ? 'parameter-form-error' : undefined} value={draft.label} onChange={event => patch('label', event.target.value)}/></label>
+        <label className="field"><span>Key</span><input ref={nameRef} name="name" required pattern="[A-Za-z_][A-Za-z0-9_]*" autoCorrect="off" autoCapitalize="none" spellCheck={false} aria-invalid={errorField === 'name'} aria-describedby={errorField === 'name' ? 'parameter-form-error' : undefined} value={draft.name} onChange={event => patch('name', event.target.value)}/></label>
+        <label className="field"><span>類型</span><select name="type" value={draft.type} onChange={event => patch('type', event.target.value)}>{Object.entries(typeLabels).map(([type, label]) => <option key={type} value={type}>{label}</option>)}</select></label>
+        <label className="field"><span>預設值</span><input name="defaultValue" value={draft.defaultValue} disabled={draft.sensitive || draft.type === 'secret'} onChange={event => patch('defaultValue', event.target.value)}/></label>
+        <label className="field"><span>選項（逗號分隔）</span><input name="options" value={draft.options} onChange={event => patch('options', event.target.value)}/></label>
+        <label className="field"><span>相依參數（選填）</span><select name="dependsOn" value={draft.dependsOn} onChange={event => patch('dependsOn', event.target.value)}><option value="">無</option>{choices.map(parameter => <option key={parameter.id} value={parameter.name}>{parameter.label} ({parameter.name})</option>)}</select><small>只有選項類型需要使用；子選單會依此參數的值動態篩選。</small></label>
+        <label className="field"><span>相依選項（每行：父值=子選項1|子選項2）</span><textarea name="dependentOptions" rows={5} placeholder={'決算主要表=損益表|盈虧撥補表\n決算明細表=收入明細表|成本彙總表'} value={draft.dependentOptions} onChange={event => patch('dependentOptions', event.target.value)}/></label>
         <label className="switch-field"><input type="checkbox" checked={draft.required} onChange={event => patch('required', event.target.checked)}/><span><b>必填參數</b></span></label>
         <label className="switch-field"><input type="checkbox" checked={draft.sensitive || draft.type === 'secret'} onChange={event => patch('sensitive', event.target.checked)}/><span><b>敏感資料</b><small>Debug 與匯出時遮罩或移除。</small></span></label>
-        {error && <p className="parameter-form-error" role="alert">{error}</p>}
+        {error && <p id="parameter-form-error" className="parameter-form-error" role="alert">{error}</p>}
         <div className="parameter-form-actions">{draft.id && <Button type="button" onClick={reset}>取消編輯</Button>}<Button variant="default" type="submit">儲存參數</Button></div>
       </form>
     </section>

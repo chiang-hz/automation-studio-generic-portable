@@ -3,6 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta id="legacyColorScheme" name="color-scheme" content="light dark" />
+    <meta name="text-scale" content="scale" />
+    <script>
+      try {
+        const storedTheme = localStorage.getItem("mcp-report-console:theme");
+        document.getElementById("legacyColorScheme").content =
+          storedTheme === "light" || storedTheme === "dark" ? storedTheme : "light dark";
+      } catch {}
+    </script>
     <title>Playwright MCP Report Console</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -45,7 +54,7 @@
             <h2 id="viewTitle">下載任務</h2>
           </div>
           <div style="display: flex; gap: 8px;">
-            <button class="ghost-button" id="manageAuthButton" type="button" style="display: flex; align-items: center; gap: 6px;">
+            <button class="ghost-button" id="manageAuthButton" type="button" commandfor="authModal" command="show-modal" style="display: flex; align-items: center; gap: 6px;">
               <span class="status-dot" id="topbarAuthDot" style="background: var(--muted);"></span>
               EBAS 登入管理
             </button>
@@ -497,16 +506,16 @@
       </main>
     </div>
 
-    <dialog id="authModal" class="modal">
+    <dialog id="authModal" class="modal" closedby="any" aria-labelledby="authModalTitle">
       <div class="panel auth-panel" style="margin: 0; border: none; box-shadow: none;">
         <div class="panel-heading">
           <div>
-            <h3>EBAS 人工登入</h3>
+            <h2 id="authModalTitle">EBAS 人工登入</h2>
             <p>從 UI 開啟登入頁，手動完成 SSO、MFA、驗證碼或憑證後儲存 session。</p>
           </div>
           <div class="heading-actions">
             <span class="status-pill pending" id="authStatusBadge">未檢查</span>
-            <button class="ghost-button compact-button danger-button" id="closeAuthModalButton" type="button">關閉</button>
+            <button class="ghost-button compact-button danger-button" id="closeAuthModalButton" type="button" commandfor="authModal" command="close" autofocus>關閉</button>
           </div>
         </div>
         <div class="auth-body" id="authBody">

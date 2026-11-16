@@ -110,6 +110,7 @@
     openHistory:wrap(openRunHistoryDetails),
     closeHistory:wrap(closeRunHistoryDetails),
     historyMarkup(){return state.selectedHistoryRun?buildRunHistoryDetailsMarkup(state.selectedHistoryRun,state.selectedHistoryDebug):'';},
+    historyDebugText(tab){return state.selectedHistoryRun?buildRunDebugText(state.selectedHistoryRun,state.selectedHistoryDebug??{events:[],variables:{},downloads:[],debugDir:''},tab):'';},
     historyClick(event){void handleRunsTableClick(event);},
     runHistoryAction(id,action){const button=document.querySelector(`#runsTable [data-run-id="${CSS.escape(id)}"][data-run-action="${CSS.escape(action)}"]`);button?.click();},
     openDownloadFolder(){const button=document.querySelector('#downloadResults [data-download-action="open-folder"]');button?.click();},

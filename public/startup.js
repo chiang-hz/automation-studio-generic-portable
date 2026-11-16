@@ -9,6 +9,10 @@
 
   try {
     const preference = localStorage.getItem('studio-startup-theme') || 'system';
+    const meta = typeof document.getElementById === 'function' ? document.getElementById('studio-color-scheme') : null;
+    if (meta) {
+      meta.content = preference === 'light' || preference === 'dark' ? preference : 'light dark';
+    }
     root.dataset.theme = preference === 'light' || preference === 'dark'
       ? preference : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   } catch {

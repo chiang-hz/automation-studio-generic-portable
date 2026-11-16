@@ -132,7 +132,13 @@ function bindActions() {
   $("#testCdpButton").addEventListener("click", testCdpConnection);
   $("#copyCdpCommandButton").addEventListener("click", copyCdpLaunchCommand);
   $("#addAllowedDomainButton").addEventListener("click", addAllowedDomain);
-  $("#allowedDomainInput").addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); addAllowedDomain(); } });
+  $("#allowedDomainInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (event.isComposing || event.keyCode === 229) return;
+      addAllowedDomain();
+    }
+  });
   $("#allowedDomains").addEventListener("input", () => { syncDomainsFromTextarea(); renderAllowedDomainChips(); });
   $("#startRecorderButton").addEventListener("click", startRecorder);
   $("#focusRecorderButton").addEventListener("click", focusRecorder);
@@ -370,8 +376,9 @@ function markDirty() {
 function setSaveState(text) { $("#saveState").textContent = text; }
 
 function openProjectDialog() {
+  const dialog = $("#projectDialog");
   $("#projectForm").reset();
-  $("#projectDialog").showModal();
+  if (!dialog.open) dialog.showModal();
   setTimeout(() => $("#newProjectName")?.focus(), 0);
 }
 
@@ -3091,7 +3098,7 @@ function renderAIProviderCard(provider) {
   const enabledClass = provider.enabled ? "completed" : "neutral";
   return `<details class="ai-provider-card" data-ai-provider="${escapeHtml(provider.id)}">
     <summary class="ai-provider-summary">
-      <div><span class="ai-provider-kind">${escapeHtml(provider.kind)}</span><h3>${escapeHtml(meta[0])}</h3><p>${escapeHtml(meta[1])}</p></div>
+      <div><span class="ai-provider-kind">${escapeHtml(provider.kind)}</span><span class="ai-provider-title">${escapeHtml(meta[0])}</span><p>${escapeHtml(meta[1])}</p></div>
       <span class="badge ${enabledClass}">${enabledLabel}</span>
     </summary>
     <div class="ai-provider-body">
@@ -4091,10 +4098,47 @@ function clearIssueReport() {
   toast("問題回報表單已清除");
 }
 
+let currentThemePreference = "system";
+let themeListenersBound = false;
+
+function ensureThemeListeners() {
+  if (themeListenersBound) return;
+  themeListenersBound = true;
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  media.addEventListener("change", () => {
+    if (currentThemePreference === "system") {
+      applyTheme("system");
+    }
+  });
+  window.addEventListener("storage", (event) => {
+    if (event.key !== "studio-startup-theme") return;
+    const next = event.newValue === "light" || event.newValue === "dark" ? event.newValue : "system";
+    if (next !== currentThemePreference) {
+      applyTheme(next);
+      const setting = $("#themeSetting");
+      if (setting) setting.value = next;
+    }
+  });
+}
+
 function applyTheme(theme) {
-  const resolved = theme === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
+  ensureThemeListeners();
+  const normalized = theme === "light" || theme === "dark" ? theme : "system";
+  currentThemePreference = normalized;
+  const resolved = normalized === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : normalized;
   document.documentElement.dataset.theme = resolved;
-  try { localStorage.setItem("studio-startup-theme", theme); localStorage.removeItem("studio-ui-theme"); } catch { /* Theme still applies if browser storage is unavailable. */ }
+  const meta = document.getElementById("studio-color-scheme") ?? document.querySelector('meta[name="color-scheme"]');
+  if (meta) {
+    meta.setAttribute("content", normalized === "system" ? "light dark" : normalized);
+  }
+  try {
+    if (normalized === "system") {
+      localStorage.removeItem("studio-startup-theme");
+    } else {
+      localStorage.setItem("studio-startup-theme", normalized);
+    }
+    localStorage.removeItem("studio-ui-theme");
+  } catch { /* Theme still applies if browser storage is unavailable. */ }
 }
 
 function renderRawJson() {

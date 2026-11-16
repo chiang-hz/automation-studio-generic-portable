@@ -53,6 +53,7 @@ export class StudioRuntimeSdk {
   openHistory(id: string): Promise<void> { return this.adapter.openHistory(id); }
   closeHistory(): void { this.adapter.closeHistory(); }
   historyMarkup(): string { return this.adapter.historyMarkup(); }
+  historyDebugText(tab: string): string { return this.adapter.historyDebugText?.(tab) ?? ''; }
   historyClick(event: unknown): void { this.adapter.historyClick(event); }
   runHistoryAction(id: string, action: string): void { this.adapter.runHistoryAction(id, action); }
   openDownloadFolder(): void { this.adapter.openDownloadFolder(); }

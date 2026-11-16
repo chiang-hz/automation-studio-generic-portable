@@ -3,7 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light dark" />
+    <meta id="studio-color-scheme" name="color-scheme" content="light dark" />
+    <meta name="text-scale" content="scale" />
     <title>網站自動化流程設計平台 · Automation Studio</title>
     <style id="studio-startup-style">
       html:not([data-studio-boot="ready"]) .app-shell,
@@ -29,6 +30,10 @@
 
   try {
     const preference = localStorage.getItem('studio-startup-theme') || 'system';
+    const meta = typeof document.getElementById === 'function' ? document.getElementById('studio-color-scheme') : null;
+    if (meta) {
+      meta.content = preference === 'light' || preference === 'dark' ? preference : 'light dark';
+    }
     root.dataset.theme = preference === 'light' || preference === 'dark'
       ? preference : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   } catch {
@@ -103,8 +108,7 @@
     </script>
     <link id="studio-base-styles" rel="stylesheet" href="./styles.css" />
   <!-- MODERN START -->
-    <link id="studio-modern-styles" rel="stylesheet" href="/modern/assets/studio.css?v=2.4.9-ts-auto-deps" />
-    <script defer src="/auth-state-panel.js?v=2.5.4"></script>
+    <link id="studio-modern-styles" rel="stylesheet" href="/modern/assets/studio.css?v=2.5.9" />
     <!-- MODERN END -->
   </head>
   <body>
@@ -127,7 +131,7 @@
             <select id="projectSelect" aria-label="目前專案" title="選擇目前專案"></select>
             <span id="modern-project-switcher-icon" class="sidebar-project-icon" aria-hidden="true"></span>
           </div>
-          <button class="sidebar-action" id="newProjectButton" type="button" title="建立新專案" aria-label="建立新專案"><span class="sidebar-action-icon" aria-hidden="true"></span><span class="sidebar-action-label">建立新專案</span></button>
+          <button class="sidebar-action" id="newProjectButton" type="button" commandfor="projectDialog" command="show-modal" title="建立新專案" aria-label="建立新專案"><span class="sidebar-action-icon" aria-hidden="true"></span><span class="sidebar-action-label">建立新專案</span></button>
           <button class="sidebar-action" id="importProjectButton" type="button" title="匯入可攜工作流程" aria-label="匯入可攜工作流程"><span class="sidebar-action-icon" aria-hidden="true"></span><span class="sidebar-action-label">匯入可攜工作流程</span></button>
           <input id="importProjectFile" type="file" accept=".zip,.json,application/zip,application/json" hidden />
         </div>
@@ -194,7 +198,7 @@
 
           <div class="dashboard-grid">
             <section class="card">
-              <div class="section-heading"><div><h2>最近專案</h2><p>繼續設計或複製現有流程。</p></div><button class="text-button" id="dashboardNewButton" type="button">建立專案</button></div>
+              <div class="section-heading"><div><h2>最近專案</h2><p>繼續設計或複製現有流程。</p></div><button class="text-button" id="dashboardNewButton" type="button" commandfor="projectDialog" command="show-modal">建立專案</button></div>
               <div class="project-list" id="recentProjects"></div>
             </section>
             <section class="card">
@@ -448,7 +452,7 @@
               <div class="empty-state compact batch-empty-state" id="batchEmptyState" hidden>尚未建立批次內容。請使用「＋ 新增一列」加入第一筆批次資料。</div>
             </section>
             <details class="card advanced-card" id="batchAdvancedSettings">
-              <summary class="section-heading advanced-heading batch-advanced-toggle" aria-controls="batchAdvancedContent"><div><h2>進階設定</h2><p>依用途分組顯示執行節奏、容錯與 Debug 設定；變更後會自動儲存。</p></div><span class="batch-advanced-actions"><span class="badge neutral">自動儲存</span><span class="batch-advanced-expand-label">展開</span><span class="batch-advanced-collapse-label">收合</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></span></summary>
+              <summary class="section-heading advanced-heading batch-advanced-toggle" aria-controls="batchAdvancedContent"><div><span class="summary-heading">進階設定</span><p>依用途分組顯示執行節奏、容錯與 Debug 設定；變更後會自動儲存。</p></div><span class="batch-advanced-actions"><span class="badge neutral">自動儲存</span><span class="batch-advanced-expand-label">展開</span><span class="batch-advanced-collapse-label">收合</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></span></summary>
               <div class="batch-settings-grid" id="batchAdvancedContent">
                 <section class="batch-setting-group">
                   <div class="batch-setting-title"><b>執行節奏</b><small>控制操作速度與重播方式</small></div>
@@ -559,7 +563,7 @@
 
           <details class="card settings-card ai-settings-card settings-collapsible">
             <summary class="settings-collapsible-summary">
-              <div><h2>AI Provider</h2><p>可選 OpenAI、Gemini、Ollama / Local、OpenAI-compatible 或公司 AI Gateway。需要調整時再展開。</p></div>
+              <div><span class="summary-heading">AI Provider</span><p>可選 OpenAI、Gemini、Ollama / Local、OpenAI-compatible 或公司 AI Gateway。需要調整時再展開。</p></div>
               <span class="badge neutral" id="aiSettingsBadge">AI 未啟用</span>
             </summary>
             <div class="settings-collapsible-body">
@@ -748,10 +752,10 @@
       </main>
     </div>
 
-    <dialog id="projectDialog">
+    <dialog id="projectDialog" closedby="closerequest" aria-labelledby="projectDialogTitle">
       <form method="dialog" id="projectForm" class="dialog-form">
-        <div class="dialog-heading"><div><h2>建立自動化專案</h2><p>提供網址後即可開始錄製與設計。</p></div><button type="button" class="icon-button" aria-label="關閉" data-project-dialog-close>×</button></div>
-        <label class="field"><span>專案名稱</span><input id="newProjectName" required placeholder="例如：每月報表下載" /></label>
+        <div class="dialog-heading"><div><h2 id="projectDialogTitle">建立自動化專案</h2><p>提供網址後即可開始錄製與設計。</p></div><button type="button" class="icon-button" aria-label="關閉" data-project-dialog-close>×</button></div>
+        <label class="field"><span>專案名稱</span><input id="newProjectName" required autofocus placeholder="例如：每月報表下載" /></label>
         <label class="field"><span>目標網址</span><input id="newProjectUrl" type="url" required placeholder="https://example.com" /></label>
         <label class="field"><span>說明</span><textarea id="newProjectDescription" rows="3"></textarea></label>
         <div class="dialog-actions"><button type="button" class="button secondary" data-project-dialog-close>取消</button><button id="createProjectConfirm" type="submit" class="button primary">建立並開啟</button></div>
@@ -762,7 +766,7 @@
     <script src="./app.js"></script>
   <!-- MODERN START -->
     <script src="/bridge.js"></script>
-    <script id="studio-modern-script" type="module" src="/modern/studio.js?v=2.5.9-step-delete-preserve-sheet"></script>
+    <script id="studio-modern-script" type="module" src="/modern/studio.js?v=2.5.9-theme-sync"></script>
     <!-- MODERN END -->
   </body>
 </html>

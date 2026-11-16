@@ -50,7 +50,36 @@ export function SettingsPage() {
   });
   const [cleanup, setCleanup] = useState({ debug: liveSettings.debugCleanupStatus, runs: liveSettings.runHistoryCleanupStatus });
   const [busy, setBusy] = useState<'save' | 'debug' | 'runs' | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ retentionDays?: string; runHistoryRetentionDays?: string; issueReportEmail?: string }>({});
   const dirty = useRef(false);
+  const retentionRef = useRef<HTMLInputElement>(null);
+  const runRetentionRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const osDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+  const validateField = (key: 'retentionDays' | 'runHistoryRetentionDays' | 'issueReportEmail', current: StudioSettings): string | undefined => {
+    if (key === 'retentionDays' || key === 'runHistoryRetentionDays') {
+      const value = Number(current[key]);
+      if (!Number.isInteger(value) || value < 1 || value > 365) return '請輸入 1 至 365 之間的整數天數。';
+      return undefined;
+    }
+    const email = String(current.issueReportEmail ?? '').trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return '請輸入有效的 Email 格式。';
+    return undefined;
+  };
+
+  const validateAll = (current: StudioSettings) => {
+    const next = {
+      retentionDays: validateField('retentionDays', current),
+      runHistoryRetentionDays: validateField('runHistoryRetentionDays', current),
+      issueReportEmail: validateField('issueReportEmail', current)
+    };
+    setFieldErrors(next);
+    if (next.retentionDays) { retentionRef.current?.focus(); return false; }
+    if (next.runHistoryRetentionDays) { runRetentionRef.current?.focus(); return false; }
+    if (next.issueReportEmail) { emailRef.current?.focus(); return false; }
+    return true;
+  };
 
   useEffect(() => mountLegacyAISettings(aiSlot.current), []);
   useEffect(() => {
@@ -84,9 +113,16 @@ export function SettingsPage() {
     const next = { ...draft, ...patch };
     runtimeSdk.syncSettingsDraft(next as Record<string, unknown>);
     setDraft(next);
+    setFieldErrors(current => ({
+      ...current,
+      ...(patch.retentionDays !== undefined ? { retentionDays: undefined } : {}),
+      ...(patch.runHistoryRetentionDays !== undefined ? { runHistoryRetentionDays: undefined } : {}),
+      ...(patch.issueReportEmail !== undefined ? { issueReportEmail: undefined } : {})
+    }));
   };
 
   const persist = async (): Promise<boolean> => {
+    if (!validateAll(draft)) return false;
     setBusy('save');
     try {
       const settings = { ...draft, ai: runtimeSdk.readAISettingsDraft() as StudioSettings['ai'] };
@@ -127,12 +163,12 @@ export function SettingsPage() {
     <form className="studio-card" onSubmit={submit} noValidate>
       <header className="studio-card-heading"><div><div className="studio-eyebrow">LOCAL PREFERENCES</div><h2>系統設定</h2><p>設定只保存在這台電腦的程式資料夾。啟動服務後會固定自動開啟介面。</p></div><span className="pill"><ShieldCheck size={14}/>本機設定</span></header>
       <div className="studio-form-grid">
-        <label className="field"><span><Palette size={14}/>介面配色</span><select value={String(draft.theme ?? 'system')} onChange={event => update({ theme: event.target.value as StudioSettings['theme'] })}><option value="system">依系統</option><option value="light">淺色</option><option value="dark">深色</option></select></label>
-        <label className="field"><span>Debug 保留天數</span><input type="number" min={1} max={365} value={Number(draft.retentionDays ?? 30)} onChange={event => update({ retentionDays: Math.min(365, Math.max(1, Number(event.target.value) || 1)) })}/></label>
-        <label className="field"><span>執行紀錄保留天數</span><input type="number" min={1} max={365} value={Number(draft.runHistoryRetentionDays ?? 30)} onChange={event => update({ runHistoryRetentionDays: Math.min(365, Math.max(1, Number(event.target.value) || 1)) })}/><small>與 Debug 保留天數分開設定；只清理已完成、失敗或取消的紀錄。</small></label>
-        <label className="field"><span><FolderDown size={14}/>預設下載路徑</span><input value={String(draft.defaultDownloadDir ?? './downloads')} onChange={event => update({ defaultDownloadDir: event.target.value })}/></label>
-        <label className="field"><span>Debug 保存方式</span><select value={String(draft.debugRetention ?? 'failures')} onChange={event => update({ debugRetention: event.target.value as StudioSettings['debugRetention'] })}><option value="failures">僅失敗任務</option><option value="all">全部任務</option></select><small>成功任務完成後只刪除該次 run 的 Debug；失敗／取消任務依保留天數處理。</small></label>
-        <label className="field field-wide"><span><Mail size={14}/>問題回報收件信箱</span><input type="email" placeholder="例如 support@example.gov.tw" value={String(draft.issueReportEmail ?? '')} onChange={event => update({ issueReportEmail: event.target.value })}/><small>「回報問題」會以此信箱作為預設收件人。</small></label>
+        <label className="field"><span><Palette size={14}/>介面配色</span><select name="theme" value={String(draft.theme ?? 'system')} onChange={event => update({ theme: event.target.value as StudioSettings['theme'] })}><option value="system">{`依系統（目前${osDark ? '深色' : '淺色'}）`}</option><option value="light">淺色</option><option value="dark">深色</option></select></label>
+        <label className="field"><span>Debug 保留天數</span><input ref={retentionRef} name="retentionDays" type="number" min={1} max={365} aria-invalid={Boolean(fieldErrors.retentionDays)} aria-describedby={fieldErrors.retentionDays ? 'retentionDaysError' : undefined} value={Number(draft.retentionDays ?? 30)} onChange={event => update({ retentionDays: Number(event.target.value) })} onBlur={() => setFieldErrors(c => ({ ...c, retentionDays: validateField('retentionDays', draft) }))}/>{fieldErrors.retentionDays && <small id="retentionDaysError" className="field-error" role="alert">{fieldErrors.retentionDays}</small>}</label>
+        <label className="field"><span>執行紀錄保留天數</span><input ref={runRetentionRef} name="runHistoryRetentionDays" type="number" min={1} max={365} aria-invalid={Boolean(fieldErrors.runHistoryRetentionDays)} aria-describedby={fieldErrors.runHistoryRetentionDays ? 'runRetentionDaysError' : 'runRetentionHint'} value={Number(draft.runHistoryRetentionDays ?? 30)} onChange={event => update({ runHistoryRetentionDays: Number(event.target.value) })} onBlur={() => setFieldErrors(c => ({ ...c, runHistoryRetentionDays: validateField('runHistoryRetentionDays', draft) }))}/>{fieldErrors.runHistoryRetentionDays && <small id="runRetentionDaysError" className="field-error" role="alert">{fieldErrors.runHistoryRetentionDays}</small>}<small id="runRetentionHint">與 Debug 保留天數分開設定；只清理已完成、失敗或取消的紀錄。</small></label>
+        <label className="field"><span><FolderDown size={14}/>預設下載路徑</span><input name="defaultDownloadDir" value={String(draft.defaultDownloadDir ?? './downloads')} onChange={event => update({ defaultDownloadDir: event.target.value })}/></label>
+        <label className="field"><span>Debug 保存方式</span><select name="debugRetention" value={String(draft.debugRetention ?? 'failures')} onChange={event => update({ debugRetention: event.target.value as StudioSettings['debugRetention'] })}><option value="failures">僅失敗任務</option><option value="all">全部任務</option></select><small>成功任務完成後只刪除該次 run 的 Debug；失敗／取消任務依保留天數處理。</small></label>
+        <label className="field field-wide"><span><Mail size={14}/>問題回報收件信箱</span><input ref={emailRef} name="issueReportEmail" type="email" autoComplete="email" aria-invalid={Boolean(fieldErrors.issueReportEmail)} aria-describedby={fieldErrors.issueReportEmail ? 'issueReportEmailError' : 'issueReportEmailHint'} placeholder="例如 support@example.gov.tw" value={String(draft.issueReportEmail ?? '')} onChange={event => update({ issueReportEmail: event.target.value })} onBlur={() => setFieldErrors(c => ({ ...c, issueReportEmail: validateField('issueReportEmail', draft) }))}/>{fieldErrors.issueReportEmail && <small id="issueReportEmailError" className="field-error" role="alert">{fieldErrors.issueReportEmail}</small>}<small id="issueReportEmailHint">「回報問題」會以此信箱作為預設收件人。</small></label>
       </div>
       <div className="settings-cleanup-list">
         <CleanupSummary title="Debug 到期清理" status={cleanup.debug} onRun={() => void runCleanup('debug')} busy={busy === 'debug'}/>

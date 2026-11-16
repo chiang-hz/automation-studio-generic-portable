@@ -406,13 +406,31 @@ function bindActions() {
   updateBrowserModeWarning();
   elements.applyBatchStageButton.addEventListener("click", () => applyBatchParameter("stage", elements.batchStageSelect.value, "階段"));
   elements.applyBatchOutputFormatButton.addEventListener("click", () => applyBatchParameter("outputFormat", elements.batchOutputFormatSelect.value, "輸出格式"));
-  elements.manageAuthButton.addEventListener("click", () => elements.authModal.showModal());
-  elements.closeAuthModalButton.addEventListener("click", () => elements.authModal.close());
-  elements.authModal.addEventListener("click", (event) => {
-    if (event.target === elements.authModal) {
-      elements.authModal.close();
-    }
-  });
+  if (!("commandForElement" in HTMLButtonElement.prototype)) {
+    elements.manageAuthButton.addEventListener("click", () => elements.authModal.showModal());
+    elements.closeAuthModalButton.addEventListener("click", () => elements.authModal.close());
+  }
+  if (!("closedBy" in HTMLDialogElement.prototype)) {
+    const isOutsideDialog = (event, dialog) => {
+      const rect = dialog.getBoundingClientRect();
+      return (
+        event.clientX < rect.left ||
+        event.clientX > rect.right ||
+        event.clientY < rect.top ||
+        event.clientY > rect.bottom
+      );
+    };
+    let pressedOutside = false;
+    elements.authModal.addEventListener("pointerdown", (event) => {
+      pressedOutside = isOutsideDialog(event, elements.authModal);
+    });
+    elements.authModal.addEventListener("pointerup", (event) => {
+      if (pressedOutside && isOutsideDialog(event, elements.authModal)) {
+        elements.authModal.close();
+      }
+      pressedOutside = false;
+    });
+  }
   elements.workerGrid.addEventListener("click", (event) => handleWorkerAction(event));
   elements.openDownloadDirButton.addEventListener("click", () => openDownloadDirectory());
   elements.callToolButton.addEventListener("click", () => callManualTool());
@@ -1557,27 +1575,47 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function initTheme() {
-  const theme = localStorage.getItem(storageKeys.theme);
-  if (theme === "dark") {
-    document.body.classList.add("dark-theme");
-  } else if (theme === "light") {
-    document.body.classList.add("light-theme");
+function applyLegacyThemePreference(theme) {
+  const normalized = theme === "dark" || theme === "light" ? theme : "system";
+  document.body.classList.toggle("dark-theme", normalized === "dark");
+  document.body.classList.toggle("light-theme", normalized === "light");
+  const meta = document.querySelector('meta[name="color-scheme"]');
+  if (meta) {
+    meta.setAttribute("content", normalized === "system" ? "light dark" : normalized);
   }
 }
 
-function toggleTheme() {
-  const isDark = document.body.classList.contains("dark-theme") || 
-                 (!document.body.classList.contains("light-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  if (isDark) {
-    document.body.classList.remove("dark-theme");
-    document.body.classList.add("light-theme");
-    localStorage.setItem(storageKeys.theme, "light");
-    showToast("已切換至淺色模式");
-  } else {
-    document.body.classList.remove("light-theme");
-    document.body.classList.add("dark-theme");
-    localStorage.setItem(storageKeys.theme, "dark");
-    showToast("已切換至深色模式");
+function initTheme() {
+  try {
+    applyLegacyThemePreference(localStorage.getItem(storageKeys.theme));
+  } catch {
+    applyLegacyThemePreference("system");
   }
+  window.addEventListener("storage", (event) => {
+    if (event.key === storageKeys.theme) {
+      applyLegacyThemePreference(event.newValue);
+    }
+  });
+}
+
+function toggleTheme() {
+  const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const currentlyDark =
+    document.body.classList.contains("dark-theme") ||
+    (!document.body.classList.contains("light-theme") && systemDark);
+  const target = currentlyDark ? "light" : "dark";
+  const systemTheme = systemDark ? "dark" : "light";
+  try {
+    if (target === systemTheme) {
+      localStorage.removeItem(storageKeys.theme);
+      applyLegacyThemePreference("system");
+      showToast("已恢復依系統配色");
+      return;
+    }
+    localStorage.setItem(storageKeys.theme, target);
+  } catch {
+    // Still apply theme to the current session when storage is blocked.
+  }
+  applyLegacyThemePreference(target);
+  showToast(target === "dark" ? "已切換至深色模式" : "已切換至淺色模式");
 }

@@ -235,7 +235,9 @@ function Studio() {
   const toggleTheme = async () => {
     if (themeSaving) return;
     const original = String(snapshot.state.settings?.theme ?? 'system');
-    const next = snapshot.theme === 'dark' ? 'light' : 'dark';
+    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    const targetResolved = snapshot.theme === 'dark' ? 'light' : 'dark';
+    const next = targetResolved === systemTheme ? 'system' : targetResolved;
     setThemeSaving(true);
     runtimeSdk.setTheme(next);
     try {

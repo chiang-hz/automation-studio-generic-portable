@@ -80,17 +80,19 @@ export function ReportPage() {
     <section className="studio-card">
       <header className="studio-card-heading"><div><div className="studio-eyebrow">SUPPORT REQUEST</div><h2>回報問題</h2><p>建立郵件草稿並附上必要診斷資訊，寄送至系統管理者設定的信箱。</p></div><span className={`pill ${email ? 'status-success' : 'status-error'}`}><Mail size={14}/>{email || '尚未設定收件信箱'}</span></header>
       <aside className="studio-notice privacy-notice"><ShieldCheck size={16}/><span><b>隱私提醒</b>系統不會自動加入密碼、Cookie、MFA、驗證碼或參數實際值。若自行貼上 Debug 記錄，請先確認其中沒有敏感資訊。</span></aside>
+      <form onSubmit={event => { event.preventDefault(); send(); }} noValidate>
       <div className="studio-form-grid">
-        <ReportField label="問題類別"><select value={form.category} onChange={event => update({ category: event.target.value })}>{['流程執行','錄製與 Selector','下載','批次任務','匯入／匯出','介面顯示','系統設定','其他'].map(value => <option key={value}>{value}</option>)}</select></ReportField>
-        <ReportField label="影響程度"><select value={form.severity} onChange={event => update({ severity: event.target.value })}><option value="normal">一般問題</option><option value="important">影響工作</option><option value="blocking">無法繼續使用</option></select></ReportField>
-        <ReportField label="主旨" wide><input value={form.subject} placeholder="簡短描述問題" onChange={event => update({ subject: event.target.value })}/></ReportField>
-        <ReportField label="問題描述" wide><textarea rows={4} value={form.description} placeholder="發生什麼情況、在哪一個頁面或功能發生。" onChange={event => update({ description: event.target.value })}/></ReportField>
-        <ReportField label="重現步驟" wide><textarea rows={4} value={form.steps} placeholder="例如：1. 開啟執行紀錄  2. 展開失敗任務  3. 查看錯誤內容" onChange={event => update({ steps: event.target.value })}/></ReportField>
-        <ReportField label="預期結果"><textarea rows={3} value={form.expected} placeholder="原本預期系統如何運作" onChange={event => update({ expected: event.target.value })}/></ReportField>
-        <ReportField label="實際結果"><textarea rows={3} value={form.actual} placeholder="實際看到的結果或錯誤訊息" onChange={event => update({ actual: event.target.value })}/></ReportField>
-        <ReportField label="聯絡方式（選填）" wide><input value={form.contact} placeholder="姓名、分機或回覆 Email" onChange={event => update({ contact: event.target.value })}/></ReportField>
+        <ReportField label="問題類別"><select name="category" value={form.category} onChange={event => update({ category: event.target.value })}>{['流程執行','錄製與 Selector','下載','批次任務','匯入／匯出','介面顯示','系統設定','其他'].map(value => <option key={value}>{value}</option>)}</select></ReportField>
+        <ReportField label="影響程度"><select name="severity" value={form.severity} onChange={event => update({ severity: event.target.value })}><option value="normal">一般問題</option><option value="important">影響工作</option><option value="blocking">無法繼續使用</option></select></ReportField>
+        <ReportField label="主旨" wide><input name="subject" value={form.subject} placeholder="簡短描述問題" onChange={event => update({ subject: event.target.value })}/></ReportField>
+        <ReportField label="問題描述" wide><textarea name="description" rows={4} value={form.description} placeholder="發生什麼情況、在哪一個頁面或功能發生。" onChange={event => update({ description: event.target.value })}/></ReportField>
+        <ReportField label="重現步驟" wide><textarea name="steps" rows={4} value={form.steps} placeholder="例如：1. 開啟執行紀錄  2. 展開失敗任務  3. 查看錯誤內容" onChange={event => update({ steps: event.target.value })}/></ReportField>
+        <ReportField label="預期結果"><textarea name="expected" rows={3} value={form.expected} placeholder="原本預期系統如何運作" onChange={event => update({ expected: event.target.value })}/></ReportField>
+        <ReportField label="實際結果"><textarea name="actual" rows={3} value={form.actual} placeholder="實際看到的結果或錯誤訊息" onChange={event => update({ actual: event.target.value })}/></ReportField>
+        <ReportField label="聯絡方式（選填）" wide><input name="contact" autoComplete="email" value={form.contact} placeholder="姓名、分機或回覆 Email" onChange={event => update({ contact: event.target.value })}/></ReportField>
       </div>
-      <div className="studio-button-row report-actions"><Button variant="primary" onClick={send}><Mail size={15}/>開啟郵件並回報</Button><Button onClick={() => void copy()}>{copied ? <Check size={15}/> : <Clipboard size={15}/>}複製回報內容</Button><Button variant="ghost" onClick={clear}>清除</Button></div>
+      <div className="studio-button-row report-actions"><Button type="submit" variant="primary"><Mail size={15}/>開啟郵件並回報</Button><Button type="button" onClick={() => void copy()}>{copied ? <Check size={15}/> : <Clipboard size={15}/>}複製回報內容</Button><Button type="button" variant="ghost" onClick={clear}>清除</Button></div>
+      </form>
     </section>
     <aside className="studio-card report-context-card"><header className="studio-card-heading"><div><div className="studio-eyebrow">DIAGNOSTIC CONTEXT</div><h2>將自動附帶</h2><p>辨識環境所需的非敏感資訊。</p></div><Sparkles size={18}/></header><dl className="report-context"><div><dt>系統版本</dt><dd>Automation Studio V2.2.0</dd></div><div><dt>目前專案</dt><dd>{project?.name ?? '尚未開啟專案'}</dd></div><div><dt>專案 ID</dt><dd className="mono">{project?.id ?? '—'}</dd></div><div><dt>瀏覽器模式</dt><dd>{cdp ? 'Chrome CDP 接管' : 'Automation Studio 管理瀏覽器'}</dd></div><div><dt>回報時間</dt><dd>{new Intl.DateTimeFormat('zh-TW', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}</dd></div></dl><div className="studio-notice"><b>沒有預設郵件程式？</b><span>按「複製回報內容」，再貼到組織使用的郵件系統中。</span></div></aside>
   </div>;
