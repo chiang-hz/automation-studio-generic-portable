@@ -13,12 +13,9 @@ exports/
 
 # User Data and Logs
 data/profiles/
+data/studio/**/*.json
 data/studio/runs/
-data/studio/*-status.json
-data/studio/settings.json
 data/studio/projects/*
-!data/studio/projects/ebas-report-example/
-!data/studio/projects/generic-example/
 *.log
 
 # Environment variables and secrets

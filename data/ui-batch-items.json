@@ -1,0 +1,50 @@
+[
+  {
+    "reportId": "001",
+    "reportName": "01損益表",
+    "parameters": {
+      "businessType": "單位",
+      "fundType": "決(結)算編製",
+      "year": "114",
+      "stage": "院編決算",
+      "outputFormat": "excel",
+      "printLevel": "不適用",
+      "usagePrintStopLevel": "不適用",
+      "accountLevel": "不適用",
+      "accountCode": "不適用",
+      "accountPrintLevel": "不適用"
+    }
+  },
+  {
+    "reportId": "002",
+    "reportName": "02盈虧撥補表",
+    "parameters": {
+      "businessType": "單位",
+      "fundType": "決(結)算編製",
+      "year": "114",
+      "stage": "院編決算",
+      "outputFormat": "excel",
+      "printLevel": "不適用",
+      "usagePrintStopLevel": "不適用",
+      "accountLevel": "不適用",
+      "accountCode": "不適用",
+      "accountPrintLevel": "不適用"
+    }
+  },
+  {
+    "reportId": "003",
+    "reportName": "03現金流量表",
+    "parameters": {
+      "businessType": "單位",
+      "fundType": "決(結)算編製",
+      "year": "114",
+      "stage": "院編決算",
+      "outputFormat": "excel",
+      "printLevel": "3",
+      "usagePrintStopLevel": "不適用",
+      "accountLevel": "不適用",
+      "accountCode": "不適用",
+      "accountPrintLevel": "不適用"
+    }
+  }
+]
